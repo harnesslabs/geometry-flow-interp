@@ -1,0 +1,33 @@
+{
+  "os": "macOS-15.7-arm64-arm-64bit-Mach-O",
+  "python": "CPython 3.13.3",
+  "startedAt": "2026-02-23T20:44:39.578141Z",
+  "program": "/Users/stock/Development/research/stockeh/geometry-flow-interp/src/main.py",
+  "codePath": "src/main.py",
+  "codePathLocal": "src/main.py",
+  "email": "jason12stock@gmail.com",
+  "root": "/Users/stock/Development/research/stockeh/geometry-flow-interp",
+  "host": "Jasons-MacBook-Pro.local",
+  "executable": "/Users/stock/Development/research/stockeh/geometry-flow-interp/.venv/bin/python3",
+  "cpu_count": 14,
+  "cpu_count_logical": 14,
+  "disk": {
+    "/": {
+      "total": "994662584320",
+      "used": "334605271040"
+    }
+  },
+  "memory": {
+    "total": "38654705664"
+  },
+  "apple": {
+    "name": "Apple M4 Max",
+    "ecpuCores": 4,
+    "pcpuCores": 10,
+    "gpuCores": 32,
+    "memoryGb": 36,
+    "swapTotalBytes": "2147483648",
+    "ramTotalBytes": "38654705664"
+  },
+  "writerId": "dxkfmugr16plw2lo5mcwmxpy3dekwp9x"
+}

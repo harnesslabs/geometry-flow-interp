@@ -1,0 +1,12 @@
+{"time":"2026-02-23T13:26:16.305316-07:00","level":"INFO","msg":"stream: starting","core version":"0.25.0"}
+{"time":"2026-02-23T13:26:16.416739-07:00","level":"WARN","msg":"featurechecker: GraphQL client is nil, skipping feature loading"}
+{"time":"2026-02-23T13:26:16.416797-07:00","level":"INFO","msg":"stream: created new stream","id":"fdpylvl6"}
+{"time":"2026-02-23T13:26:16.416825-07:00","level":"INFO","msg":"handler: started","stream_id":"fdpylvl6"}
+{"time":"2026-02-23T13:26:16.416944-07:00","level":"INFO","msg":"stream: started","id":"fdpylvl6"}
+{"time":"2026-02-23T13:26:16.416953-07:00","level":"INFO","msg":"writer: started","stream_id":"fdpylvl6"}
+{"time":"2026-02-23T13:26:16.416959-07:00","level":"INFO","msg":"sender: started","stream_id":"fdpylvl6"}
+{"time":"2026-02-23T13:26:16.418057-07:00","level":"WARN","msg":"runupserter: server does not expand metric globs but the x_server_side_expand_glob_metrics setting is set; ignoring"}
+{"time":"2026-02-23T13:26:20.035447-07:00","level":"INFO","msg":"stream: closing","id":"fdpylvl6"}
+{"time":"2026-02-23T13:26:20.035644-07:00","level":"INFO","msg":"handler: closed","stream_id":"fdpylvl6"}
+{"time":"2026-02-23T13:26:20.03574-07:00","level":"INFO","msg":"sender: closed","stream_id":"fdpylvl6"}
+{"time":"2026-02-23T13:26:20.035749-07:00","level":"INFO","msg":"stream: closed","id":"fdpylvl6"}

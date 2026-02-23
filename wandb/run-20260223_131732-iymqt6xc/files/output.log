@@ -1,0 +1,12 @@
+Checkpoint directory: checkpoints/default
+Traceback (most recent call last):
+  File "/Users/stock/Development/research/stockeh/geometry-flow-interp/src/main.py", line 197, in <module>
+    main(args)
+    ~~~~^^^^^^
+  File "/Users/stock/Development/research/stockeh/geometry-flow-interp/src/main.py", line 191, in main
+    train(args)
+    ~~~~~^^^^^^
+  File "/Users/stock/Development/research/stockeh/geometry-flow-interp/src/main.py", line 41, in train
+    ds = train_loader.dataset.dataset
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'MNIST' object has no attribute 'dataset'
