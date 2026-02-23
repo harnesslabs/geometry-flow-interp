@@ -16,7 +16,7 @@ from mnist import setup_dataloaders
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--batch-size", type=int, default=256)
-parser.add_argument("--epochs", type=int, default=500)
+parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--learning-rate", type=float, default=1e-3)
 parser.add_argument("--grad-norm", type=float, default=1.5)
 parser.add_argument("--cosine", action="store_true")

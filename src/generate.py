@@ -21,7 +21,7 @@ def load_checkpoint(experiment: str, checkpoint_dir: str, device: str) -> Denois
 
     config = DenoiserConfig(**ckpt["config"])
     config.cfg_scale = 2.0
-    config.noise_scale = 0.5
+    config.noise_scale = 1.0
     model = Denoiser(config, device).to(device)
     model.load_state_dict(ckpt["model"])
     for i, (k, v) in enumerate(model.ema.items()):
