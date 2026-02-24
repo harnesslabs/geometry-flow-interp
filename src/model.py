@@ -72,9 +72,6 @@ class Model(nn.Module):
         self.blocks = nn.ModuleList(
             [AdaLNBlock(hidden_dim, dropout) for _ in range(num_blocks)]
         )
-
-        self.norm = nn.LayerNorm(hidden_dim, elementwise_affine=False)
-        self.gates = nn.Linear(hidden_dim, 2 * hidden_dim)
         self.output = nn.Linear(hidden_dim, out_features)
 
         self._init_weights()
@@ -94,8 +91,6 @@ class Model(nn.Module):
             nn.init.zeros_(block.gates.weight)
             nn.init.zeros_(block.gates.bias)
 
-        nn.init.zeros_(self.gates.weight)
-        nn.init.zeros_(self.gates.bias)
         nn.init.zeros_(self.output.weight)
         nn.init.zeros_(self.output.bias)
 
@@ -108,8 +103,5 @@ class Model(nn.Module):
 
         for block in self.blocks:
             x = block(x, c)
-
-        scale, shift = self.gates(c).chunk(2, dim=-1)
-        x = (1.0 + scale) * self.norm(x) + shift
 
         return self.output(x)

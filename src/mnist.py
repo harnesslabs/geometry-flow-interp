@@ -12,7 +12,7 @@ class MNIST(Dataset):
         self,
         root: str = "~/.cache/data",
         train: bool = True,
-        rotate: bool = True,
+        rotate: bool = False,
     ):
         raw = datasets.MNIST(root=root, train=train, download=True)
         self.x = raw.data.unsqueeze(1).float() / 255.0 * 2.0 - 1.0  # (N, 1, 28, 28)
@@ -31,9 +31,10 @@ class MNIST(Dataset):
         return self.x.shape[0]
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:  # type: ignore[override]
+        x = self.x[idx]
         if self.rotate:
             angle = random.uniform(0, 360)
-            x = F.rotate(self.x[idx], angle=-angle, fill=[-1])  # normalized fill value
+            x = F.rotate(x, angle=-angle, fill=[-1])  # normalized fill value
         return x.flatten(), self.c[idx]
 
 

@@ -146,7 +146,6 @@ class Denoiser(nn.Module):
     def swap_ema(self, decay: float | None = None):
         params = copy.deepcopy(self.net.state_dict())
         ep = self.ema.get(decay, next(iter(self.ema.values())))
-        # self.net._orig_mod.load_state_dict(ep.state_dict())  # not compiled
         self.net.load_state_dict(ep.state_dict())
         return params
 
