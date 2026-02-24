@@ -52,7 +52,7 @@ class Model(nn.Module):
         self,
         in_features: int,
         out_features: int,
-        cond_features: int,
+        n_classes: int,
         hidden_dim: int = 512,
         num_blocks: int = 6,
         time_dim: int = 64,
@@ -67,11 +67,7 @@ class Model(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
         )
-        self.cond_embed = nn.Sequential(
-            nn.Linear(cond_features, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
+        self.cond_embed = nn.Embedding(n_classes + 1, hidden_dim)
         self.input_embed = nn.Linear(in_features, hidden_dim)
 
         self.blocks = nn.ModuleList(
@@ -91,6 +87,7 @@ class Model(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
+        nn.init.normal_(self.cond_embed.weight, std=0.02)
         nn.init.normal_(self.input_embed.weight, std=0.02)
 
         for module in self.blocks:
@@ -106,6 +103,7 @@ class Model(nn.Module):
     def forward(
         self, z: torch.Tensor, t: torch.Tensor, cond: torch.Tensor
     ) -> torch.Tensor:
+        # z: (B, N), t: (B,), cond: (B,)
         c = self.time_embed(t) + self.cond_embed(cond)
         x = self.input_embed(z)
 

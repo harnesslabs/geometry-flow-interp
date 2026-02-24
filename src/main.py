@@ -34,12 +34,12 @@ def train(args):
     device = utils.get_torch_device().type
 
     ds = train_loader.dataset
-    features = ds.img_resolution[0] * ds.img_resolution[1] * ds.n_channels
+    print(ds.shape, ds.n_classes)
     model = Denoiser(
         DenoiserConfig(
-            in_features=features,
-            out_features=features,
-            cond_features=1,
+            in_features=ds.shape,
+            out_features=ds.shape,
+            n_classes=ds.n_classes,
         ),
         device,
     ).to(device)

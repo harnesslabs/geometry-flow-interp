@@ -1,5 +1,6 @@
 import random
 
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 from torchvision import datasets
@@ -7,37 +8,46 @@ from torchvision.transforms import functional as F
 
 
 class MNIST(Dataset):
-    def __init__(self, root: str = "~/.cache/data", train: bool = True):
+    def __init__(
+        self,
+        root: str = "~/.cache/data",
+        train: bool = True,
+        rotate: bool = True,
+    ):
         raw = datasets.MNIST(root=root, train=train, download=True)
         x = raw.data.unsqueeze(1).float() / 255.0 * 2.0 - 1.0  # (N, 1, 28, 28)
-        self.x = F.pad(x, [2, 2, 2, 2])  # (N, 1, 32, 32)
-        self.c = raw.targets.reshape(-1, 1).float()  # (N,1) digit class 0-9
+        self.x = F.pad(x, [2, 2, 2, 2], fill=-1)  # (N, 1, 32, 32) normalized fill value
+        self.c = raw.targets  # (N,) digit class 0-9
+        self.rotate = rotate
 
     @property
-    def n_channels(self) -> int:
-        return 1
+    def shape(self) -> int:
+        return np.prod(self.x.shape[1:]).item()
 
     @property
-    def img_resolution(self) -> tuple[int, int]:
-        return (32, 32)
+    def n_classes(self) -> int:
+        return 10
 
     def __len__(self) -> int:
         return self.x.shape[0]
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:  # type: ignore[override]
-        angle = random.uniform(0, 360)
-        x = F.rotate(self.x[idx], angle=-angle)  # negative = clockwise
+        if self.rotate:
+            angle = random.uniform(0, 360)
+            x = F.rotate(self.x[idx], angle=-angle, fill=[-1])  # normalized fill value
         return x.flatten(), self.c[idx]
 
 
 def setup_dataloaders(batch_size):
-    train_ds = MNIST(train=True)
-    test_ds = MNIST(train=False)
     train_loader = torch.utils.data.DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, num_workers=0
+        MNIST(train=True),
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        drop_last=True,
     )
     test_loader = torch.utils.data.DataLoader(
-        test_ds, batch_size=batch_size, shuffle=False, num_workers=0
+        MNIST(train=False), batch_size=batch_size, shuffle=False, num_workers=0
     )
     return train_loader, test_loader
 
@@ -51,7 +61,7 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(1, 6, figsize=(12, 2))
     for i, ax in enumerate(axes):
         x, c = ds[i]
-        ax.imshow(x.squeeze(0), cmap="gray")
+        ax.imshow(x.reshape(32, 32), cmap="gray")
         ax.set_title(f"class={c.item()}")
         ax.axis("off")
     plt.tight_layout()

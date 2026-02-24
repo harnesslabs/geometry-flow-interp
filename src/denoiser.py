@@ -11,9 +11,9 @@ from model import Model
 class DenoiserConfig:
     in_features: int
     out_features: int
-    cond_features: int
+    n_classes: int
     hidden_dim: int = 256
-    num_blocks: int = 4
+    num_blocks: int = 2
     time_dim: int = 32
     dropout: float = 0.1
     #
@@ -21,7 +21,7 @@ class DenoiserConfig:
     P_mean: float = -0.8
     P_std: float = 0.8
     t_eps: float = 5e-2
-    noise_scale: float = 2.0
+    noise_scale: float = 1.0
     #
     ema_decay: tuple[float, ...] = (0.9980, 0.9996)
     #
@@ -37,7 +37,7 @@ class Denoiser(nn.Module):
         self.net = Model(
             in_features=config.in_features,
             out_features=config.out_features,
-            cond_features=config.cond_features,
+            n_classes=config.n_classes,
             hidden_dim=config.hidden_dim,
             num_blocks=config.num_blocks,
             time_dim=config.time_dim,
@@ -50,11 +50,8 @@ class Denoiser(nn.Module):
         self.config = config
 
     def drop_cond(self, x):
-        mask = (
-            torch.rand(x.size(0), *[1] * (x.ndim - 1), device=x.device)
-            >= self.config.cond_drop_prob
-        ).float()
-        return x * mask
+        drop = torch.rand(x.shape[0], device=x.device) < self.config.cond_drop_prob
+        return torch.where(drop, self.config.n_classes, x)
 
     def sample_t(self, n: int, device=None):
         z = torch.randn(n, device=device) * self.config.P_std + self.config.P_mean
@@ -79,7 +76,7 @@ class Denoiser(nn.Module):
     def generate(self, cond):
         B = cond.size(0)
         z = self.config.noise_scale * torch.randn(
-            B, self.config.out_features, device=cond.device, dtype=cond.dtype
+            B, self.config.out_features, device=cond.device
         )
         timesteps = (
             torch.linspace(
@@ -111,7 +108,9 @@ class Denoiser(nn.Module):
             return v_cond
 
         # unconditional
-        x_uncond = self.net(z, t.flatten(), torch.zeros_like(cond))
+        x_uncond = self.net(
+            z, t.flatten(), torch.full_like(cond, self.config.n_classes)
+        )
         v_uncond = (x_uncond - z) / (1.0 - t).clamp_min(self.config.t_eps)
 
         # cfg interval
@@ -169,14 +168,14 @@ if __name__ == "__main__":
     device = utils.get_torch_device().type
 
     x = torch.randn(1, 64, dtype=torch.float32).to(device)
-    cond = torch.randn(1, 32, dtype=torch.float32).to(device)
+    cond = torch.randint(0, 10, (1, 1), dtype=torch.float32).to(device)
 
     print("Testing Denoiser...")
     model = Denoiser(
         DenoiserConfig(
             in_features=x.shape[1],
             out_features=x.shape[1],
-            cond_features=cond.shape[1],
+            n_classes=cond.shape[1],
         ),
         device=device,
     ).to(device)
