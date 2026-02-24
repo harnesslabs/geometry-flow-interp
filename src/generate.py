@@ -21,7 +21,7 @@ def load_checkpoint(experiment: str, checkpoint_dir: str, device: str) -> Denois
 
     config = DenoiserConfig(**ckpt["config"])
     config.cfg_scale = 2.0
-    config.noise_scale = 1.0
+    config.noise_scale = 0.5
     model = Denoiser(config, device).to(device)
     model.load_state_dict(ckpt["model"])
     for i, (k, v) in enumerate(model.ema.items()):
@@ -43,8 +43,7 @@ def main(args: argparse.Namespace) -> None:
 
     n_classes = 10
     n_samples = 10
-    cond = torch.arange(n_classes, device=device).float().repeat_interleave(n_samples)
-    cond = cond.unsqueeze(1)  # (100, 1)
+    cond = torch.arange(n_classes, device=device).repeat_interleave(n_samples)  # (100,)
 
     with torch.inference_mode():
         with (
@@ -53,6 +52,8 @@ def main(args: argparse.Namespace) -> None:
             else nullcontext()
         ):
             samples = model.generate(cond)
+
+    print(samples.shape)
 
     # (100, 1024) -> (100, 1, 32, 32), denormalize [-1,1] -> [0,1]
     samples = samples.float().view(-1, 1, 32, 32)

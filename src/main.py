@@ -34,6 +34,7 @@ def train(args):
     device = utils.get_torch_device().type
 
     ds = train_loader.dataset
+    print(ds.shape, ds.n_classes)
     model = Denoiser(
         DenoiserConfig(
             in_features=ds.shape,

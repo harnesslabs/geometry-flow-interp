@@ -49,10 +49,9 @@ class Denoiser(nn.Module):
         }
         self.config = config
 
-    def drop_labels(self, x):
-        drop = torch.rand(x.shape[0], device=x.device) < self.label_drop_prob
-        out = torch.where(drop, torch.full_like(x, self.num_classes), x)
-        return out
+    def drop_cond(self, x):
+        drop = torch.rand(x.shape[0], device=x.device) < self.config.cond_drop_prob
+        return torch.where(drop, self.config.n_classes, x)
 
     def sample_t(self, n: int, device=None):
         z = torch.randn(n, device=device) * self.config.P_std + self.config.P_mean
@@ -77,7 +76,7 @@ class Denoiser(nn.Module):
     def generate(self, cond):
         B = cond.size(0)
         z = self.config.noise_scale * torch.randn(
-            B, self.config.out_features, device=cond.device, dtype=cond.dtype
+            B, self.config.out_features, device=cond.device
         )
         timesteps = (
             torch.linspace(

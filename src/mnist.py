@@ -16,13 +16,13 @@ class MNIST(Dataset):
     ):
         raw = datasets.MNIST(root=root, train=train, download=True)
         x = raw.data.unsqueeze(1).float() / 255.0 * 2.0 - 1.0  # (N, 1, 28, 28)
-        self.x = F.pad(x, [2, 2, 2, 2])  # (N, 1, 32, 32)
+        self.x = F.pad(x, [2, 2, 2, 2], fill=-1)  # (N, 1, 32, 32) normalized fill value
         self.c = raw.targets  # (N,) digit class 0-9
         self.rotate = rotate
 
     @property
     def shape(self) -> int:
-        return np.prod(self.x.shape[1:])
+        return np.prod(self.x.shape[1:]).item()
 
     @property
     def n_classes(self) -> int:
@@ -34,7 +34,7 @@ class MNIST(Dataset):
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:  # type: ignore[override]
         if self.rotate:
             angle = random.uniform(0, 360)
-            x = F.rotate(self.x[idx], angle=-angle)
+            x = F.rotate(self.x[idx], angle=-angle, fill=[-1])  # normalized fill value
         return x.flatten(), self.c[idx]
 
 
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(1, 6, figsize=(12, 2))
     for i, ax in enumerate(axes):
         x, c = ds[i]
-        ax.imshow(x.squeeze(0), cmap="gray")
+        ax.imshow(x.reshape(32, 32), cmap="gray")
         ax.set_title(f"class={c.item()}")
         ax.axis("off")
     plt.tight_layout()
