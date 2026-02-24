@@ -14,7 +14,6 @@ class DenoiserConfig:
     n_classes: int
     hidden_dim: int = 256
     num_blocks: int = 2
-    time_dim: int = 32
     dropout: float = 0.1
     #
     cond_drop_prob: float = 0.2
@@ -40,7 +39,6 @@ class Denoiser(nn.Module):
             n_classes=config.n_classes,
             hidden_dim=config.hidden_dim,
             num_blocks=config.num_blocks,
-            time_dim=config.time_dim,
             dropout=config.dropout,
         )
         self.ema = {

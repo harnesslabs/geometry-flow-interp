@@ -55,15 +55,14 @@ class Model(nn.Module):
         n_classes: int,
         hidden_dim: int = 512,
         num_blocks: int = 6,
-        time_dim: int = 64,
         dropout: float = 0.0,
     ):
         super().__init__()
         self.out_features = out_features
 
         self.time_embed = nn.Sequential(
-            SinusoidalEmbedding(time_dim),
-            nn.Linear(time_dim, hidden_dim),
+            SinusoidalEmbedding(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
         )
