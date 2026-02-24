@@ -55,8 +55,8 @@ def main(args: argparse.Namespace) -> None:
 
     print(samples.shape)
 
-    # (100, 1024) -> (100, 1, 32, 32), denormalize [-1,1] -> [0,1]
-    samples = samples.float().view(-1, 1, 32, 32)
+    # (100, 1024) -> (100, 1, 28, 28), denormalize [-1,1] -> [0,1]
+    samples = samples.float().view(-1, 1, 28, 28)
     samples = ((samples + 1) / 2).clamp(0, 1)
 
     out_dir = Path("media")

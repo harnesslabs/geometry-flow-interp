@@ -15,8 +15,7 @@ class MNIST(Dataset):
         rotate: bool = True,
     ):
         raw = datasets.MNIST(root=root, train=train, download=True)
-        x = raw.data.unsqueeze(1).float() / 255.0 * 2.0 - 1.0  # (N, 1, 28, 28)
-        self.x = F.pad(x, [2, 2, 2, 2], fill=-1)  # (N, 1, 32, 32) normalized fill value
+        self.x = raw.data.unsqueeze(1).float() / 255.0 * 2.0 - 1.0  # (N, 1, 28, 28)
         self.c = raw.targets  # (N,) digit class 0-9
         self.rotate = rotate
 
@@ -61,7 +60,7 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(1, 6, figsize=(12, 2))
     for i, ax in enumerate(axes):
         x, c = ds[i]
-        ax.imshow(x.reshape(32, 32), cmap="gray")
+        ax.imshow(x.reshape(28, 28), cmap="gray")
         ax.set_title(f"class={c.item()}")
         ax.axis("off")
     plt.tight_layout()
