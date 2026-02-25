@@ -2,7 +2,7 @@ from pathlib import Path
 
 import torch
 
-from denoiser import Denoiser
+from gf.denoiser import Denoiser
 
 
 class CheckpointManager:

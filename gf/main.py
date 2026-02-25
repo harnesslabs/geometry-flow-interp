@@ -8,11 +8,11 @@ from torch.amp import autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchinfo import summary
 
-import utils
 import wandb
-from checkpoint import CheckpointManager
-from denoiser import Denoiser, DenoiserConfig
-from mnist import setup_dataloaders
+from gf import utils
+from gf.checkpoint import CheckpointManager
+from gf.denoiser import Denoiser, DenoiserConfig
+from gf.mnist import setup_dataloaders
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--batch-size", type=int, default=256)
