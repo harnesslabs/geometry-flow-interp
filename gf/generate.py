@@ -7,8 +7,8 @@ from torch.amp import autocast
 from torchinfo import summary
 from torchvision.utils import save_image
 
-import utils
-from denoiser import Denoiser, DenoiserConfig
+from gf import utils
+from gf.denoiser import Denoiser, DenoiserConfig
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--experiment", type=str, default="default")

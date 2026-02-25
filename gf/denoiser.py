@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from model import Model
+from gf.model import Model
 
 
 @dataclass
@@ -159,7 +159,7 @@ if __name__ == "__main__":
 
     from torchinfo import summary
 
-    import utils
+    from gf import utils
 
     utils.setup_torch()
     device = utils.get_torch_device().type
