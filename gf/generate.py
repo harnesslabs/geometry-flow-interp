@@ -1,9 +1,7 @@
 import argparse
-from contextlib import nullcontext
 from pathlib import Path
 
 import torch
-from torch.amp import autocast
 from torchinfo import summary
 from torchvision.utils import save_image
 
@@ -45,13 +43,8 @@ def main(args: argparse.Namespace) -> None:
     n_samples = 10
     cond = torch.arange(n_classes, device=device).repeat_interleave(n_samples)  # (100,)
 
-    with torch.inference_mode():
-        with (
-            autocast(device, dtype=torch.bfloat16)
-            if device == "cuda"
-            else nullcontext()
-        ):
-            samples = model.generate(cond)
+    with torch.inference_mode(), utils.maybe_autocast(device):
+        samples = model.generate(cond)
 
     print(samples.shape)
 

@@ -1,10 +1,8 @@
 import argparse
 import os
 import time
-from contextlib import nullcontext
 
 import torch
-from torch.amp import autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchinfo import summary
 
@@ -74,17 +72,14 @@ def train(args):
             data_dt = time.time() - data_start
             iter_start = time.time()
 
-            with (
-                autocast(device, dtype=torch.bfloat16)
-                if device == "cuda"
-                else nullcontext()
-            ):
+            with utils.maybe_autocast(device):
                 loss = model(x, y)
 
             loss.backward()
-            gnorm = utils.grad_norm(model)
+            gnorm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), args.grad_norm
+            ).item()
             lr = optimizer.param_groups[0]["lr"]
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_norm)
             optimizer.step()
             scheduler.step()
 
@@ -128,11 +123,7 @@ def train(args):
                 x = x.to(device)
                 y = y.to(device)
 
-                with (
-                    autocast(device, dtype=torch.bfloat16)
-                    if device == "cuda"
-                    else nullcontext()
-                ):
+                with utils.maybe_autocast(device):
                     loss = model(x, y)
                     pred = model.generate(y)
 

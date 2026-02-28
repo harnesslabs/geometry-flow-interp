@@ -1,5 +1,6 @@
 import copy
 from dataclasses import dataclass
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -24,7 +25,7 @@ class DenoiserConfig:
     #
     ema_decay: tuple[float, ...] = (0.9980, 0.9996)
     #
-    sampling_method: str = "heun"
+    sampling_method: Literal["euler", "heun"] = "heun"
     num_sampling_steps: int = 20
     cfg_scale: float = 2.0
     cfg_interval: tuple[float, float] = (0.1, 1.0)
@@ -55,6 +56,9 @@ class Denoiser(nn.Module):
         z = torch.randn(n, device=device) * self.config.P_std + self.config.P_mean
         return torch.sigmoid(z)
 
+    def _to_velocity(self, x, z, t):
+        return (x - z) / (1 - t).clamp_min(self.config.t_eps)
+
     def forward(self, x, cond):
         cond_dropped = self.drop_cond(cond) if self.training else cond
 
@@ -62,10 +66,10 @@ class Denoiser(nn.Module):
         e = torch.randn_like(x) * self.config.noise_scale
 
         z = t * x + (1 - t) * e
-        v = (x - z) / (1 - t).clamp_min(self.config.t_eps)
+        v = self._to_velocity(x, z, t)
 
         x_pred = self.net(z, t.flatten(), cond_dropped)
-        v_pred = (x_pred - z) / (1 - t).clamp_min(self.config.t_eps)
+        v_pred = self._to_velocity(x_pred, z, t)
 
         loss = ((v - v_pred) ** 2).mean()
         return loss
@@ -99,17 +103,16 @@ class Denoiser(nn.Module):
 
     @torch.no_grad()
     def _forward_sample(self, z, t, cond):
+        t_flat = t.flatten()
         # conditional
-        x_cond = self.net(z, t.flatten(), cond)
-        v_cond = (x_cond - z) / (1.0 - t).clamp_min(self.config.t_eps)
+        x_cond = self.net(z, t_flat, cond)
+        v_cond = self._to_velocity(x_cond, z, t)
         if self.config.cfg_scale == 1:
             return v_cond
 
         # unconditional
-        x_uncond = self.net(
-            z, t.flatten(), torch.full_like(cond, self.config.n_classes)
-        )
-        v_uncond = (x_uncond - z) / (1.0 - t).clamp_min(self.config.t_eps)
+        x_uncond = self.net(z, t_flat, torch.full_like(cond, self.config.n_classes))
+        v_uncond = self._to_velocity(x_uncond, z, t)
 
         # cfg interval
         low, high = self.config.cfg_interval
