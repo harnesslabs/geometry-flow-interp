@@ -1,4 +1,7 @@
+from contextlib import contextmanager, nullcontext
+
 import torch
+from torch.amp import autocast
 
 
 def setup_torch() -> None:
@@ -18,13 +21,7 @@ def get_torch_device() -> torch.device:
         return torch.device("cpu")
 
 
-def grad_norm(model: torch.nn.Module) -> float:
-    device = next(model.parameters()).device
-    total_sq = torch.zeros(1, device=device)
-
-    for p in model.parameters():
-        if p.grad is None:
-            continue
-        total_sq += p.grad.detach().float().pow(2).sum()
-
-    return total_sq.sqrt().item()
+@contextmanager
+def maybe_autocast(device: str):
+    with autocast(device, dtype=torch.bfloat16) if device == "cuda" else nullcontext():
+        yield
