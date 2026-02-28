@@ -9,7 +9,6 @@
   # run scripts
   uv run python -m gf.main             # training
   uv run python -m gf.generate         # generation
-  uv run python -m gf.analysis.atlas   # analysis scripts
   # after modifying any Python file, **always** run
   uv run ruff format <file> # format the file
   uv run ruff check --fix # fix linting issues
