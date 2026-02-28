@@ -18,9 +18,8 @@ dev = [
     "ty>=0.0.18",
 ]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.uv]
+package = true
 
-[tool.hatch.build.targets.wheel]
+[tool.setuptools]
 packages = ["gf"]
