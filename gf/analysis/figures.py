@@ -615,6 +615,64 @@ def fig5_synthesis(
 
 
 # ---------------------------------------------------------------------------
+# Fig 6: Trajectory density landscape
+# ---------------------------------------------------------------------------
+
+
+def fig6_landscape(results_path: Path, atlas: TrajectoryAtlas, out_dir: Path) -> None:
+    """Plot trajectory density landscape from pre-computed results."""
+    from gf.analysis.landscape import (
+        plot_landscape,
+    )
+
+    data = torch.load(results_path, map_location="cpu")
+
+    # Reconstruct PCA from saved components
+    pca = PCA(n_components=2)
+    pca.components_ = data["pca_components"].numpy()
+    pca.mean_ = data["pca_mean"].numpy()
+
+    xx = data["xx"].numpy()
+    yy = data["yy"].numpy()
+    time_fractions = data["time_fractions"]
+
+    # Reconstruct landscape dict
+    slices: dict[float, dict[str, np.ndarray]] = {}
+    for tf in time_fractions:
+        sd = data["slice_data"][str(tf)]
+        # Reconstruct z_2d by projecting atlas positions at this time
+        timesteps = atlas.timesteps.numpy()
+        ti = int(np.argmin(np.abs(timesteps - tf)))
+        z_2d = pca.transform(atlas.z[:, ti].numpy())
+        slices[tf] = {
+            "total_density": sd["total_density"].numpy(),
+            "dominant_class": sd["dominant_class"].numpy(),
+            "per_class_density": sd["per_class_density"].numpy(),
+            "z_2d": z_2d,
+        }
+
+    landscape = {
+        "xx": xx,
+        "yy": yy,
+        "slices": slices,
+        "time_fractions": time_fractions,
+    }
+
+    # Reconstruct trajectories
+    trajectories = [
+        {
+            "x": t["x"].numpy(),
+            "y": t["y"].numpy(),
+            "z": t["z"].numpy(),
+            "class_label": t["class_label"],
+        }
+        for t in data["trajectories"]
+    ]
+
+    plot_landscape(landscape, trajectories, out_dir)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -663,6 +721,14 @@ def main(args: argparse.Namespace) -> None:
         fig5_synthesis(atlas, hodge_path, adaln_path, out_dir)
     else:
         print("Skipping Fig 5 (missing Hodge or AdaLN results)")
+
+    # Fig 6
+    landscape_path = base / "landscape_results.pt"
+    if landscape_path.exists():
+        print("Generating Fig 6...")
+        fig6_landscape(landscape_path, atlas, out_dir)
+    else:
+        print(f"Skipping Fig 6 ({landscape_path} not found)")
 
     print(f"\nAll figures saved to {out_dir}")
 
