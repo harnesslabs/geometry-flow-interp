@@ -1,15 +1,8 @@
 ## Code Environment
 
-- Use astral (uv, ty, ruff) for best practices. Do not commit changes unless formatting, linting, and type checks pass.
+- See @README.md for setup and run commands.
+- Use astral (uv, ty, ruff) for best practices. After modifying any Python file, **always** run:
   ```bash
-  # install dependencies
-  uv sync
-  # add dependencies
-  uv add <package>
-  # run scripts
-  uv run python -m gf.main             # training
-  uv run python -m gf.generate         # generation
-  # after modifying any Python file, **always** run
   uv run ruff format <file> # format the file
   uv run ruff check --fix # fix linting issues
   uv run ty check # check for type errors
