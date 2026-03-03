@@ -18,16 +18,17 @@ def load_checkpoint(experiment: str, checkpoint_dir: str, device: str) -> Denois
     ckpt = torch.load(path, map_location=device)
 
     config = DenoiserConfig(**ckpt["config"])
-    config.cfg_scale = 2.0
-    config.noise_scale = 0.5
+    config.cfg_scale = 2.5
+    config.noise_scale = 0.8
     model = Denoiser(config, device).to(device)
-    model.load_state_dict(ckpt["model"])
-    for i, (k, v) in enumerate(model.ema.items()):
-        if i == 1:
-            v.load_state_dict(ckpt["ema"][k])
+    summary(model, depth=3)
+
+    decay = sorted(model.ema.keys())[0]
+    model.ema[decay].load_state_dict(ckpt["ema"][decay])
+    model.swap_ema(decay=decay)
+    print(f"Using EMA with {decay=} for sampling")
 
     model.eval()
-    summary(model, depth=3)
 
     print(f"Loaded checkpoint from {path} (step={ckpt.get('global_step', '?')})")
     return model

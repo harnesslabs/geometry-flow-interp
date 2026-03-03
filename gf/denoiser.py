@@ -17,13 +17,13 @@ class DenoiserConfig:
     num_blocks: int = 2
     dropout: float = 0.1
     #
-    cond_drop_prob: float = 0.2
+    cond_drop_prob: float = 0.1
     P_mean: float = -0.8
     P_std: float = 0.8
     t_eps: float = 5e-2
     noise_scale: float = 1.0
     #
-    ema_decay: tuple[float, ...] = (0.9980, 0.9996)
+    ema_decay: tuple[float, ...] = (0.9980, 0.9995)
     #
     sampling_method: Literal["euler", "heun"] = "heun"
     num_sampling_steps: int = 20

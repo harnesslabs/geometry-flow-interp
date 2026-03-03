@@ -12,7 +12,7 @@ class MNIST(Dataset):
         self,
         root: str = "~/.cache/data",
         train: bool = True,
-        rotate: bool = False,
+        rotate: bool = True,
     ):
         raw = datasets.MNIST(root=root, train=train, download=True)
         self.x = raw.data.unsqueeze(1).float() / 255.0 * 2.0 - 1.0  # (N, 1, 28, 28)
@@ -25,7 +25,7 @@ class MNIST(Dataset):
 
     @property
     def n_classes(self) -> int:
-        return 10
+        return np.unique(self.c).shape[0]
 
     def __len__(self) -> int:
         return self.x.shape[0]

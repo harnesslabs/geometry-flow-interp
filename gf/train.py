@@ -22,7 +22,7 @@ parser.add_argument("--cosine", action="store_true")
 # experiment
 parser.add_argument("--experiment", type=str, default="default")
 parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
-parser.add_argument("--checkpoint-interval", type=int, default=10)
+parser.add_argument("--checkpoint-interval", type=int, default=2)
 parser.add_argument("--resume", action="store_true")
 parser.add_argument("--offline", action="store_true")
 
