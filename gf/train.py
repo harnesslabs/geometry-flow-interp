@@ -1,4 +1,5 @@
 import argparse
+import dataclasses
 import os
 import time
 
@@ -112,6 +113,7 @@ def train(args):
         device,
     ).to(device)
     summary(model, depth=3)
+    wandb.config.update({"DenoiserConfig": dataclasses.asdict(model.config)})
 
     optimizer = setup_optimizer(model, args)
 
@@ -176,16 +178,13 @@ def train(args):
                 "kimg": global_kimg,
                 "epoch": epoch,
             }
-            lr_str = f"lr={lr:.2e}"
             if not args.adamw:
-                muon_lr = optimizer.param_groups[1]["lr"]
-                metrics["train/muon_lr"] = muon_lr
-                lr_str += f" muon_lr={muon_lr:.2e}"
+                metrics["train/muon_lr"] = optimizer.param_groups[1]["lr"]
             wandb.log(metrics, step=global_step)
 
             print(
                 f"epoch={epoch} step={global_step} kimg={global_kimg:.1f} "
-                f"train/loss={metrics['train/loss']:.4f} train/gnorm={gnorm:.3f} {lr_str} "
+                f"train/loss={metrics['train/loss']:.4f} train/gnorm={gnorm:.3f} {lr=:.2e} "
                 f"train/dt={dt:.3f}s train/data={data_dt:.3f}s"
             )
             data_start = time.time()
