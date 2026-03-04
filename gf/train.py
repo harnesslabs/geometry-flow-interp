@@ -20,9 +20,9 @@ parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--warmup", type=float, default=0.1)
 parser.add_argument("--cosine", action="store_true")
 parser.add_argument("--grad-norm", type=float, default=float("inf"))
-parser.add_argument("--lr", "--learning-rate", type=float, default=1e-3)
+parser.add_argument("--lr", "--learning-rate", type=float, default=3e-4)
 parser.add_argument("--wd", "--weight-decay", type=float, default=0.0)
-parser.add_argument("--betas", type=tuple, default=(0.9, 0.999))
+parser.add_argument("--betas", type=float, nargs=2, default=(0.9, 0.999))
 parser.add_argument("--eps", type=float, default=1e-10)
 
 parser.add_argument("--muon", action="store_true")
@@ -41,7 +41,7 @@ parser.add_argument("--offline", action="store_true", help="disable wandb")
 
 def setup_optimizer(model, args):
     if not args.muon:
-        return torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
+        return torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     from gf.optim import MuonAdamW
 
@@ -184,7 +184,7 @@ def train(args):
 
             print(
                 f"epoch={epoch} step={global_step} kimg={global_kimg:.1f} "
-                f"train/loss={loss.item():.4f} train/gnorm={gnorm:.3f} {lr_str} "
+                f"train/loss={metrics['train/loss']:.4f} train/gnorm={gnorm:.3f} {lr_str} "
                 f"train/dt={dt:.3f}s train/data={data_dt:.3f}s"
             )
             data_start = time.time()
