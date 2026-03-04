@@ -17,13 +17,18 @@ parser.add_argument("--batch-size", type=int, default=256)
 parser.add_argument("--epochs", type=int, default=100)
 
 # optimizer
-parser.add_argument("--grad-norm", type=float, default=float("inf"))
-parser.add_argument("--learning-rate", type=float, default=1e-3)
 parser.add_argument("--warmup", type=float, default=0.1)
 parser.add_argument("--cosine", action="store_true")
+parser.add_argument("--grad-norm", type=float, default=float("inf"))
+parser.add_argument("--lr", "--learning-rate", type=float, default=1e-3)
+parser.add_argument("--wd", "--weight-decay", type=float, default=0.0)
+parser.add_argument("--betas", type=tuple, default=(0.9, 0.999))
+parser.add_argument("--eps", type=float, default=1e-10)
+
 parser.add_argument("--muon", action="store_true")
 parser.add_argument("--muon-lr", type=float, default=0.02)
 parser.add_argument("--muon-wd", type=float, default=0.2)
+parser.add_argument("--muon-beta2", type=float, default=0.95)
 parser.add_argument("--muon-momentum", type=float, default=0.95)
 
 # experiment
@@ -31,7 +36,7 @@ parser.add_argument("--experiment", type=str, default="default")
 parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
 parser.add_argument("--checkpoint-interval", type=int, default=2)
 parser.add_argument("--resume", action="store_true")
-parser.add_argument("--offline", action="store_true")
+parser.add_argument("--offline", action="store_true", help="disable wandb")
 
 
 def setup_optimizer(model, args):
@@ -40,8 +45,8 @@ def setup_optimizer(model, args):
 
     from gf.optim import MuonAdamW
 
-    gate_weights = []  # (3H, H)
-    ff_weights = []  # (H, H)
+    gate_weights = []
+    ff_weights = []
     adamw_params = []
 
     for name, param in model.named_parameters():
@@ -62,7 +67,7 @@ def setup_optimizer(model, args):
         "lr": args.muon_lr,
         "momentum": args.muon_momentum,
         "ns_steps": 5,
-        "beta2": 0.95,
+        "beta2": args.muon_beta2,
         "weight_decay": args.muon_wd,
     }
 
@@ -70,10 +75,10 @@ def setup_optimizer(model, args):
         {
             "params": adamw_params,
             "kind": "adamw",
-            "lr": args.learning_rate,
-            "betas": (0.9, 0.95),
-            "eps": 1e-10,
-            "weight_decay": 0.0,
+            "lr": args.lr,
+            "betas": args.betas,
+            "eps": args.eps,
+            "weight_decay": args.wd,
         },
     ]
     if gate_weights:
