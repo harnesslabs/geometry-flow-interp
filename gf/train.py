@@ -17,19 +17,20 @@ parser.add_argument("--batch-size", type=int, default=256)
 parser.add_argument("--epochs", type=int, default=100)
 
 # optimizer
-parser.add_argument("--warmup", type=float, default=0.1)
-parser.add_argument("--cosine", action="store_true")
-parser.add_argument("--grad-norm", type=float, default=float("inf"))
 parser.add_argument("--lr", "--learning-rate", type=float, default=3e-4)
 parser.add_argument("--wd", "--weight-decay", type=float, default=0.0)
 parser.add_argument("--betas", type=float, nargs=2, default=(0.9, 0.999))
 parser.add_argument("--eps", type=float, default=1e-10)
 
-parser.add_argument("--muon", action="store_true")
 parser.add_argument("--muon-lr", type=float, default=0.02)
 parser.add_argument("--muon-wd", type=float, default=0.2)
 parser.add_argument("--muon-beta2", type=float, default=0.95)
 parser.add_argument("--muon-momentum", type=float, default=0.95)
+
+parser.add_argument("--warmup", type=float, default=0.1, help="lr warmup")
+parser.add_argument("--adamw", action="store_true", help="only AdamW")
+parser.add_argument("--cosine", action="store_true", help="lr anneal")
+parser.add_argument("--grad-norm", type=float, default=float("inf"))
 
 # experiment
 parser.add_argument("--experiment", type=str, default="default")
@@ -40,7 +41,7 @@ parser.add_argument("--offline", action="store_true", help="disable wandb")
 
 
 def setup_optimizer(model, args):
-    if not args.muon:
+    if args.adamw:
         return torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     from gf.optim import MuonAdamW
@@ -147,7 +148,7 @@ def train(args):
             gnorm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), args.grad_norm
             ).item()
-            if args.muon:
+            if not args.adamw:
                 frac = min(global_step / warmup_steps, 1) if warmup_steps > 0 else 1
                 muon_momentum = max(args.muon_momentum - 0.10, 0.0) + frac * 0.10
                 muon_wd = args.muon_wd * (1 - global_step / total_steps)
@@ -176,7 +177,7 @@ def train(args):
                 "epoch": epoch,
             }
             lr_str = f"lr={lr:.2e}"
-            if args.muon:
+            if not args.adamw:
                 muon_lr = optimizer.param_groups[1]["lr"]
                 metrics["train/muon_lr"] = muon_lr
                 lr_str += f" muon_lr={muon_lr:.2e}"
