@@ -22,9 +22,9 @@ class SinusoidalEmbedding(nn.Module):
 class SwiGLU(nn.Module):
     def __init__(self, hidden_dim: int):
         super().__init__()
-        self.w1 = nn.Linear(hidden_dim, hidden_dim)
-        self.w2 = nn.Linear(hidden_dim, hidden_dim)
-        self.w3 = nn.Linear(hidden_dim, hidden_dim)
+        self.w1 = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.w2 = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.w3 = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.w3(F.silu(self.w1(x)) * self.w2(x))
@@ -34,7 +34,7 @@ class AdaLNBlock(nn.Module):
     def __init__(self, hidden_dim: int, dropout: float = 0.0):
         super().__init__()
         self.norm = nn.LayerNorm(hidden_dim, elementwise_affine=False)
-        self.gates = nn.Linear(hidden_dim, 3 * hidden_dim)
+        self.gates = nn.Linear(hidden_dim, 3 * hidden_dim, bias=False)
         self.ff = SwiGLU(hidden_dim)
         self.drop = nn.Dropout(dropout)
 
@@ -87,7 +87,6 @@ class Model(nn.Module):
         for module in self.blocks:
             block: AdaLNBlock = module  # type: ignore[assignment]
             nn.init.zeros_(block.gates.weight)
-            nn.init.zeros_(block.gates.bias)
 
         nn.init.zeros_(self.output.weight)
         nn.init.zeros_(self.output.bias)

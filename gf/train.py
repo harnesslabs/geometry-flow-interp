@@ -15,16 +15,87 @@ from gf.mnist import setup_dataloaders
 parser = argparse.ArgumentParser()
 parser.add_argument("--batch-size", type=int, default=256)
 parser.add_argument("--epochs", type=int, default=100)
-parser.add_argument("--learning-rate", type=float, default=1e-3)
-parser.add_argument("--grad-norm", type=float, default=1.5)
-parser.add_argument("--cosine", action="store_true")
+
+# optimizer
+parser.add_argument("--lr", "--learning-rate", type=float, default=3e-4)
+parser.add_argument("--wd", "--weight-decay", type=float, default=0.0)
+parser.add_argument("--betas", type=float, nargs=2, default=(0.9, 0.999))
+parser.add_argument("--eps", type=float, default=1e-10)
+
+parser.add_argument("--muon-lr", type=float, default=0.02)
+parser.add_argument("--muon-wd", type=float, default=0.2)
+parser.add_argument("--muon-beta2", type=float, default=0.95)
+parser.add_argument("--muon-momentum", type=float, default=0.95)
+
+parser.add_argument("--warmup", type=float, default=0.1, help="lr warmup")
+parser.add_argument("--adamw", action="store_true", help="only AdamW")
+parser.add_argument("--cosine", action="store_true", help="lr anneal")
+parser.add_argument("--grad-norm", type=float, default=float("inf"))
 
 # experiment
 parser.add_argument("--experiment", type=str, default="default")
 parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
 parser.add_argument("--checkpoint-interval", type=int, default=2)
 parser.add_argument("--resume", action="store_true")
-parser.add_argument("--offline", action="store_true")
+parser.add_argument("--offline", action="store_true", help="disable wandb")
+
+
+def setup_optimizer(model, args):
+    if args.adamw:
+        return torch.optim.AdamW(model.parameters(), lr=args.lr)
+
+    from gf.optim import MuonAdamW
+
+    gate_weights = []
+    ff_weights = []
+    adamw_params = []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if ".blocks." in name and name.endswith(".weight") and param.ndim == 2:
+            if ".gates." in name:
+                gate_weights.append(param)
+            elif ".ff." in name:
+                ff_weights.append(param)
+            else:
+                adamw_params.append(param)
+        else:
+            adamw_params.append(param)
+
+    muon_defaults = {
+        "kind": "muon",
+        "lr": args.muon_lr,
+        "momentum": args.muon_momentum,
+        "ns_steps": 5,
+        "beta2": args.muon_beta2,
+        "weight_decay": args.muon_wd,
+    }
+
+    param_groups = [
+        {
+            "params": adamw_params,
+            "kind": "adamw",
+            "lr": args.lr,
+            "betas": args.betas,
+            "eps": args.eps,
+            "weight_decay": args.wd,
+        },
+    ]
+    if gate_weights:
+        param_groups.append({"params": gate_weights, **muon_defaults})
+    if ff_weights:
+        param_groups.append({"params": ff_weights, **muon_defaults})
+
+    # Print parameter group summary
+    muon_ids = {id(p) for p in gate_weights + ff_weights}
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        kind = "muon" if id(param) in muon_ids else "adamw"
+        print(f"  {kind:5s}  {str(list(param.shape)):>14s}  {name}")
+
+    return MuonAdamW(param_groups)
 
 
 def train(args):
@@ -42,14 +113,12 @@ def train(args):
     ).to(device)
     summary(model, depth=3)
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.learning_rate, betas=(0.9, 0.999)
-    )
+    optimizer = setup_optimizer(model, args)
 
-    warmup_steps = len(train_loader) * (args.epochs / 10)
+    total_steps = len(train_loader) * args.epochs
+    warmup_steps = int(total_steps * args.warmup)
     scheduler = LinearLR(optimizer, start_factor=0.01, total_iters=warmup_steps)
     if args.cosine:
-        total_steps = len(train_loader) * args.epochs
         cosine = CosineAnnealingLR(
             optimizer, T_max=total_steps - warmup_steps, eta_min=1e-6
         )
@@ -79,6 +148,14 @@ def train(args):
             gnorm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), args.grad_norm
             ).item()
+            if not args.adamw:
+                frac = min(global_step / warmup_steps, 1) if warmup_steps > 0 else 1
+                muon_momentum = max(args.muon_momentum - 0.10, 0.0) + frac * 0.10
+                muon_wd = args.muon_wd * (1 - global_step / total_steps)
+                for g in optimizer.param_groups:
+                    if g["kind"] == "muon":
+                        g["momentum"] = muon_momentum
+                        g["weight_decay"] = muon_wd
             lr = optimizer.param_groups[0]["lr"]
             optimizer.step()
             scheduler.step()
@@ -99,11 +176,16 @@ def train(args):
                 "kimg": global_kimg,
                 "epoch": epoch,
             }
+            lr_str = f"lr={lr:.2e}"
+            if not args.adamw:
+                muon_lr = optimizer.param_groups[1]["lr"]
+                metrics["train/muon_lr"] = muon_lr
+                lr_str += f" muon_lr={muon_lr:.2e}"
             wandb.log(metrics, step=global_step)
 
             print(
                 f"epoch={epoch} step={global_step} kimg={global_kimg:.1f} "
-                f"train/loss={loss.item():.4f} train/gnorm={gnorm:.3f} lr={lr:.2e} "
+                f"train/loss={metrics['train/loss']:.4f} train/gnorm={gnorm:.3f} {lr_str} "
                 f"train/dt={dt:.3f}s train/data={data_dt:.3f}s"
             )
             data_start = time.time()

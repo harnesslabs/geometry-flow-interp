@@ -13,9 +13,9 @@ class DenoiserConfig:
     in_features: int
     out_features: int
     n_classes: int
-    hidden_dim: int = 256
+    hidden_dim: int = 512
     num_blocks: int = 2
-    dropout: float = 0.1
+    dropout: float = 0.2
     #
     cond_drop_prob: float = 0.1
     P_mean: float = -0.8
@@ -26,7 +26,7 @@ class DenoiserConfig:
     ema_decay: tuple[float, ...] = (0.9980, 0.9995)
     #
     sampling_method: Literal["euler", "heun"] = "heun"
-    num_sampling_steps: int = 20
+    num_sampling_steps: int = 10
     cfg_scale: float = 2.0
     cfg_interval: tuple[float, float] = (0.1, 1.0)
 
