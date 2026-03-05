@@ -5,7 +5,7 @@ from typing import Literal
 import torch
 import torch.nn as nn
 
-from gf.model import Model
+from gf.model_jit import JiT
 
 
 @dataclass
@@ -34,13 +34,27 @@ class DenoiserConfig:
 class Denoiser(nn.Module):
     def __init__(self, config: DenoiserConfig, device: str):
         super().__init__()
-        self.net = Model(
-            in_features=config.in_features,
-            out_features=config.out_features,
-            n_classes=config.n_classes,
-            hidden_dim=config.hidden_dim,
-            num_blocks=config.num_blocks,
-            dropout=config.dropout,
+        # self.net = Model(
+        #     in_features=config.in_features,
+        #     out_features=config.out_features,
+        #     n_classes=config.n_classes,
+        #     hidden_dim=config.hidden_dim,
+        #     num_blocks=config.num_blocks,
+        #     dropout=config.dropout,
+        # )
+        self.net = JiT(
+            input_size=28,
+            patch_size=7,
+            in_channels=1,
+            hidden_size=128,
+            depth=3,
+            num_heads=4,
+            mlp_ratio=4.0,
+            attn_drop=0.0,
+            proj_drop=0.0,
+            num_classes=10,
+            in_context_len=4,
+            in_context_start=1,
         )
         self.ema = {
             k: copy.deepcopy(self.net).to(device).eval().requires_grad_(False)
@@ -77,15 +91,15 @@ class Denoiser(nn.Module):
     @torch.no_grad()
     def generate(self, cond):
         B = cond.size(0)
-        z = self.config.noise_scale * torch.randn(
-            B, self.config.out_features, device=cond.device
-        )
+        C = self.net.in_channels
+        H = W = self.net.input_size
+        z = self.config.noise_scale * torch.randn(B, C, H, W, device=cond.device)
         timesteps = (
             torch.linspace(
                 0.0, 1.0, self.config.num_sampling_steps + 1, device=cond.device
             )
             .view(-1, *([1] * z.ndim))
-            .expand(-1, B, -1)
+            .expand(-1, B, *[-1] * (z.ndim - 1))
         )
 
         if self.config.sampling_method == "euler":

@@ -35,7 +35,7 @@ class MNIST(Dataset):
         if self.rotate:
             angle = random.uniform(0, 360)
             x = F.rotate(x, angle=-angle, fill=[-1])  # normalized fill value
-        return x.flatten(), self.c[idx]
+        return x, self.c[idx]
 
 
 def setup_dataloaders(batch_size):
