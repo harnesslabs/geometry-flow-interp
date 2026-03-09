@@ -20,8 +20,8 @@ class MNIST(Dataset):
         self.rotate = rotate
 
     @property
-    def shape(self) -> int:
-        return np.prod(self.x.shape[1:]).item()
+    def shape(self) -> tuple[int, int, int]:
+        return self.x.shape[1:]  # (C, H, W)
 
     @property
     def n_classes(self) -> int:

@@ -12,9 +12,11 @@ from gf import utils
 from gf.checkpoint import CheckpointManager
 from gf.denoiser import Denoiser, DenoiserConfig
 from gf.mnist import setup_dataloaders
+from gf.model import models
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--batch-size", type=int, default=256)
+parser.add_argument("--model", type=str, default="JiT-B/7", choices=models.keys())
+parser.add_argument("--bs", "--batch-size", type=int, default=256)
 parser.add_argument("--epochs", type=int, default=100)
 
 # optimizer
@@ -100,15 +102,16 @@ def setup_optimizer(model, args):
 
 
 def train(args):
-    train_loader, val_loader = setup_dataloaders(args.batch_size)
+    train_loader, val_loader = setup_dataloaders(args.bs)
     device = utils.get_torch_device().type
 
     ds = train_loader.dataset
     model = Denoiser(
         DenoiserConfig(
-            in_features=ds.shape,
-            out_features=ds.shape,
-            n_classes=ds.n_classes,
+            model=args.model,
+            input_size=ds.shape[1],
+            in_channels=ds.shape[0],
+            num_classes=ds.n_classes,
         ),
         device,
     ).to(device)
@@ -168,7 +171,7 @@ def train(args):
             dt = time.time() - iter_start
 
             global_step += 1
-            global_kimg = global_step * (args.batch_size / 1000)
+            global_kimg = global_step * (args.bs / 1000)
 
             metrics = {
                 "train/loss": loss.item(),

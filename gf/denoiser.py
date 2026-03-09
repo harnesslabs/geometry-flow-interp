@@ -5,17 +5,15 @@ from typing import Literal
 import torch
 import torch.nn as nn
 
-from gf.model_jit import JiT
+from gf.model import models
 
 
 @dataclass
 class DenoiserConfig:
-    in_features: int
-    out_features: int
-    n_classes: int
-    hidden_dim: int = 512
-    num_blocks: int = 2
-    dropout: float = 0.2
+    model: str
+    input_size: int
+    in_channels: int
+    num_classes: int
     #
     cond_drop_prob: float = 0.1
     P_mean: float = -0.8
@@ -27,35 +25,17 @@ class DenoiserConfig:
     #
     sampling_method: Literal["euler", "heun"] = "heun"
     num_sampling_steps: int = 10
-    cfg_scale: float = 2.0
+    cfg_scale: float = 2.5
     cfg_interval: tuple[float, float] = (0.1, 1.0)
 
 
 class Denoiser(nn.Module):
     def __init__(self, config: DenoiserConfig, device: str):
         super().__init__()
-        # self.net = Model(
-        #     in_features=config.in_features,
-        #     out_features=config.out_features,
-        #     n_classes=config.n_classes,
-        #     hidden_dim=config.hidden_dim,
-        #     num_blocks=config.num_blocks,
-        #     dropout=config.dropout,
-        # )
-        self.net = JiT(
-            input_size=28,
-            patch_size=7,
-            in_channels=1,
-            hidden_size=256,
-            depth=4,
-            num_heads=8,
-            mlp_ratio=4.0,
-            attn_drop=0.0,
-            proj_drop=0.0,
-            num_classes=10,
-            in_context_len=4,
-            in_context_start=2,
-            bottleneck_dim=64,
+        self.net = models[config.model](
+            input_size=config.input_size,
+            in_channels=config.in_channels,
+            num_classes=config.num_classes,
         )
         self.ema = {
             k: copy.deepcopy(self.net).to(device).eval().requires_grad_(False)
@@ -65,7 +45,7 @@ class Denoiser(nn.Module):
 
     def drop_cond(self, x):
         drop = torch.rand(x.shape[0], device=x.device) < self.config.cond_drop_prob
-        return torch.where(drop, self.config.n_classes, x)
+        return torch.where(drop, self.config.num_classes, x)
 
     def sample_t(self, n: int, device=None):
         z = torch.randn(n, device=device) * self.config.P_std + self.config.P_mean
@@ -126,7 +106,7 @@ class Denoiser(nn.Module):
             return v_cond
 
         # unconditional
-        x_uncond = self.net(z, t_flat, torch.full_like(cond, self.config.n_classes))
+        x_uncond = self.net(z, t_flat, torch.full_like(cond, self.config.num_classes))
         v_uncond = self._to_velocity(x_uncond, z, t)
 
         # cfg interval
@@ -170,77 +150,3 @@ class Denoiser(nn.Module):
     @torch.no_grad()
     def swap_params(self, params):
         self.net.load_state_dict(params)
-
-
-if __name__ == "__main__":
-    import time
-
-    from torchinfo import summary
-
-    from gf import utils
-
-    utils.setup_torch()
-    device = utils.get_torch_device().type
-
-    x = torch.randn(1, 64, dtype=torch.float32).to(device)
-    cond = torch.randint(0, 10, (1, 1), dtype=torch.float32).to(device)
-
-    print("Testing Denoiser...")
-    model = Denoiser(
-        DenoiserConfig(
-            in_features=x.shape[1],
-            out_features=x.shape[1],
-            n_classes=cond.shape[1],
-        ),
-        device=device,
-    ).to(device)
-    summary(model, depth=3)
-
-    print("Testing ema...")
-    print("net:", next(model.net.parameters()).device)
-    for k, v in model.ema.items():
-        print("ema:", k, next(v.parameters()).device)
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    with torch.autocast(device, dtype=torch.bfloat16):
-        loss = model(x, cond)
-    loss.backward()
-    optimizer.step()
-    model.update_ema()
-
-    model.eval()
-    with torch.inference_mode():
-        with torch.autocast(device, dtype=torch.bfloat16):
-            torch.manual_seed(42)
-            loss = model(x, cond)
-        print(f"original {loss=}")
-        params = model.swap_ema()
-        with torch.autocast(device, dtype=torch.bfloat16):
-            torch.manual_seed(42)
-            loss = model(x, cond)
-        print(f"ema {loss=}")
-        model.swap_params(params)
-        with torch.autocast(device, dtype=torch.bfloat16):
-            torch.manual_seed(42)
-            loss = model(x, cond)
-        print(f"reverted {loss=}")
-
-    print("Testing generation speed...")
-    model.eval()
-    num_runs = 60
-    with torch.inference_mode(), torch.autocast(device, dtype=torch.bfloat16):
-        for _ in range(3):
-            _ = model.generate(cond)
-        torch.accelerator.synchronize()
-
-        start_t = time.perf_counter()
-        for _ in range(num_runs):
-            _ = model.generate(cond)
-        torch.accelerator.synchronize()
-        total_t = time.perf_counter() - start_t
-
-    avg_t = total_t / num_runs
-    print(f"Total time over {num_runs} runs: {total_t:.6f} s")
-    print(f"Avg time per sample: {avg_t:.6f} s")
-    print(f"Time per step: {avg_t / model.config.num_sampling_steps:.6f} s")
-    print(f"Steps per second: {model.config.num_sampling_steps / avg_t:.2f}")
