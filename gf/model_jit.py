@@ -1,8 +1,3 @@
-# --------------------------------------------------------
-# References:
-# SiT: https://github.com/willisma/SiT
-# Lightning-DiT: https://github.com/hustvl/LightningDiT
-# --------------------------------------------------------
 import math
 from math import pi
 
@@ -13,86 +8,60 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 
 
-def broadcat(tensors, dim=-1):
-    num_tensors = len(tensors)
-    shape_lens = set(list(map(lambda t: len(t.shape), tensors)))
-    assert len(shape_lens) == 1, "tensors must all have the same number of dimensions"
-    shape_len = list(shape_lens)[0]
-    dim = (dim + shape_len) if dim < 0 else dim
-    dims = list(zip(*map(lambda t: list(t.shape), tensors)))
-    expandable_dims = [(i, val) for i, val in enumerate(dims) if i != dim]
-    assert all([*map(lambda t: len(set(t[1])) <= 2, expandable_dims)]), (
-        "invalid dimensions for broadcastable concatentation"
-    )
-    max_dims = list(map(lambda t: (t[0], max(t[1])), expandable_dims))
-    expanded_dims = list(map(lambda t: (t[0], (t[1],) * num_tensors), max_dims))
-    expanded_dims.insert(dim, (dim, dims[dim]))
-    expandable_shapes = list(zip(*map(lambda t: t[1], expanded_dims)))
-    tensors = list(map(lambda t: t[0].expand(*t[1]), zip(tensors, expandable_shapes)))
-    return torch.cat(tensors, dim=dim)
+def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
+    """
+    embed_dim: output dimension for each position
+    pos: a list of positions to be encoded: size (M,)
+    out: (M, D)
+    """
+    assert embed_dim % 2 == 0
+    omega = np.arange(embed_dim // 2, dtype=np.float64)
+    omega /= embed_dim / 2.0
+    omega = 1.0 / 10000**omega  # (D/2,)
+
+    pos = pos.reshape(-1)  # (M,)
+    out = np.einsum("m,d->md", pos, omega)  # (M, D/2), outer product
+
+    emb_sin = np.sin(out)  # (M, D/2)
+    emb_cos = np.cos(out)  # (M, D/2)
+
+    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
+    return emb
 
 
-def rotate_half(x):
-    x = rearrange(x, "... (d r) -> ... d r", r=2)
-    x1, x2 = x.unbind(dim=-1)
-    x = torch.stack((-x2, x1), dim=-1)
-    return rearrange(x, "... d r -> ... (d r)")
+def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
+    assert embed_dim % 2 == 0
+
+    # use half of dimensions to encode grid_h
+    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
+    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
+
+    emb = np.concatenate([emb_h, emb_w], axis=1)  # (H*W, D)
+    return emb
 
 
-class VisionRotaryEmbedding(nn.Module):
-    def __init__(
-        self,
-        dim,
-        pt_seq_len,
-        ft_seq_len=None,
-        custom_freqs=None,
-        freqs_for="lang",
-        theta=10000,
-        max_freq=10,
-        num_freqs=1,
-    ):
-        super().__init__()
-        if custom_freqs:
-            freqs = custom_freqs
-        elif freqs_for == "lang":
-            freqs = 1.0 / (
-                theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim)
-            )
-        elif freqs_for == "pixel":
-            freqs = torch.linspace(1.0, max_freq / 2, dim // 2) * pi
-        elif freqs_for == "constant":
-            freqs = torch.ones(num_freqs).float()
-        else:
-            raise ValueError(f"unknown modality {freqs_for}")
+def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False, extra_tokens=0):
+    """
+    grid_size: int of the grid height and width
+    return:
+    pos_embed: [grid_size*grid_size, embed_dim] or [1+grid_size*grid_size, embed_dim] (w/ or w/o cls_token)
+    """
+    grid_h = np.arange(grid_size, dtype=np.float32)
+    grid_w = np.arange(grid_size, dtype=np.float32)
+    grid = np.meshgrid(grid_w, grid_h)  # here w goes first
+    grid = np.stack(grid, axis=0)
 
-        if ft_seq_len is None:
-            ft_seq_len = pt_seq_len
-        t = torch.arange(ft_seq_len) / ft_seq_len * pt_seq_len
-
-        freqs_h = torch.einsum("..., f -> ... f", t, freqs)
-        freqs_h = repeat(freqs_h, "... n -> ... (n r)", r=2)
-
-        freqs_w = torch.einsum("..., f -> ... f", t, freqs)
-        freqs_w = repeat(freqs_w, "... n -> ... (n r)", r=2)
-
-        freqs = broadcat((freqs_h[:, None, :], freqs_w[None, :, :]), dim=-1)
-
-        self.register_buffer("freqs_cos", freqs.cos())
-        self.register_buffer("freqs_sin", freqs.sin())
-
-    def forward(self, t, start_index=0):
-        rot_dim = self.freqs_cos.shape[-1]
-        end_index = start_index + rot_dim
-        assert rot_dim <= t.shape[-1], (
-            f"feature dimension {t.shape[-1]} is not of sufficient size to rotate in all the positions {rot_dim}"
+    grid = grid.reshape([2, 1, grid_size, grid_size])
+    pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
+    if cls_token and extra_tokens > 0:
+        pos_embed = np.concatenate(
+            [np.zeros([extra_tokens, embed_dim]), pos_embed], axis=0
         )
-        t_left, t, t_right = (
-            t[..., :start_index],
-            t[..., start_index:end_index],
-            t[..., end_index:],
-        )
-        t = (t * self.freqs_cos) + (rotate_half(t) * self.freqs_sin)
-        return torch.cat((t_left, t, t_right), dim=-1)
+    return pos_embed
+
+
+def modulate(x, shift, scale):
+    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
 
 class VisionRotaryEmbeddingFast(nn.Module):
@@ -128,7 +97,7 @@ class VisionRotaryEmbeddingFast(nn.Module):
 
         freqs = torch.einsum("..., f -> ... f", t, freqs)
         freqs = repeat(freqs, "... n -> ... (n r)", r=2)
-        freqs = broadcat((freqs[:, None, :], freqs[None, :, :]), dim=-1)
+        freqs = self._broadcat((freqs[:, None, :], freqs[None, :, :]), dim=-1)
 
         if num_cls_token > 0:
             freqs_flat = freqs.view(-1, freqs.shape[-1])  # [N_img, D]
@@ -145,14 +114,45 @@ class VisionRotaryEmbeddingFast(nn.Module):
             )
 
             # [N_cls+N_img, D]
-            self.freqs_cos = torch.cat([cos_pad, cos_img], dim=0).to("mps")
-            self.freqs_sin = torch.cat([sin_pad, sin_img], dim=0).to("mps")
+            freqs_cos = torch.cat([cos_pad, cos_img], dim=0)
+            freqs_sin = torch.cat([sin_pad, sin_img], dim=0)
         else:
-            self.freqs_cos = freqs.cos().view(-1, freqs.shape[-1]).to("mps")
-            self.freqs_sin = freqs.sin().view(-1, freqs.shape[-1]).to("mps")
+            freqs_cos = freqs.cos().view(-1, freqs.shape[-1])
+            freqs_sin = freqs.sin().view(-1, freqs.shape[-1])
+
+        self.register_buffer("freqs_cos", freqs_cos)
+        self.register_buffer("freqs_sin", freqs_sin)
+
+    def _broadcat(self, tensors, dim=-1):
+        num_tensors = len(tensors)
+        shape_lens = set(list(map(lambda t: len(t.shape), tensors)))
+        assert len(shape_lens) == 1, (
+            "tensors must all have the same number of dimensions"
+        )
+        shape_len = list(shape_lens)[0]
+        dim = (dim + shape_len) if dim < 0 else dim
+        dims = list(zip(*map(lambda t: list(t.shape), tensors)))
+        expandable_dims = [(i, val) for i, val in enumerate(dims) if i != dim]
+        assert all([*map(lambda t: len(set(t[1])) <= 2, expandable_dims)]), (
+            "invalid dimensions for broadcastable concatentation"
+        )
+        max_dims = list(map(lambda t: (t[0], max(t[1])), expandable_dims))
+        expanded_dims = list(map(lambda t: (t[0], (t[1],) * num_tensors), max_dims))
+        expanded_dims.insert(dim, (dim, dims[dim]))
+        expandable_shapes = list(zip(*map(lambda t: t[1], expanded_dims)))
+        tensors = list(
+            map(lambda t: t[0].expand(*t[1]), zip(tensors, expandable_shapes))
+        )
+        return torch.cat(tensors, dim=dim)
+
+    def _rotate_half(self, x):
+        x = rearrange(x, "... (d r) -> ... d r", r=2)
+        x1, x2 = x.unbind(dim=-1)
+        x = torch.stack((-x2, x1), dim=-1)
+        return rearrange(x, "... d r -> ... (d r)")
 
     def forward(self, t):
-        return t * self.freqs_cos + rotate_half(t) * self.freqs_sin
+        return t * self.freqs_cos + self._rotate_half(t) * self.freqs_sin
 
 
 class RMSNorm(nn.Module):
@@ -170,62 +170,6 @@ class RMSNorm(nn.Module):
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
         return (self.weight * hidden_states).to(input_dtype)
-
-
-def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False, extra_tokens=0):
-    """
-    grid_size: int of the grid height and width
-    return:
-    pos_embed: [grid_size*grid_size, embed_dim] or [1+grid_size*grid_size, embed_dim] (w/ or w/o cls_token)
-    """
-    grid_h = np.arange(grid_size, dtype=np.float32)
-    grid_w = np.arange(grid_size, dtype=np.float32)
-    grid = np.meshgrid(grid_w, grid_h)  # here w goes first
-    grid = np.stack(grid, axis=0)
-
-    grid = grid.reshape([2, 1, grid_size, grid_size])
-    pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
-    if cls_token and extra_tokens > 0:
-        pos_embed = np.concatenate(
-            [np.zeros([extra_tokens, embed_dim]), pos_embed], axis=0
-        )
-    return pos_embed
-
-
-def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
-    assert embed_dim % 2 == 0
-
-    # use half of dimensions to encode grid_h
-    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
-    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
-
-    emb = np.concatenate([emb_h, emb_w], axis=1)  # (H*W, D)
-    return emb
-
-
-def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
-    """
-    embed_dim: output dimension for each position
-    pos: a list of positions to be encoded: size (M,)
-    out: (M, D)
-    """
-    assert embed_dim % 2 == 0
-    omega = np.arange(embed_dim // 2, dtype=np.float64)
-    omega /= embed_dim / 2.0
-    omega = 1.0 / 10000**omega  # (D/2,)
-
-    pos = pos.reshape(-1)  # (M,)
-    out = np.einsum("m,d->md", pos, omega)  # (M, D/2), outer product
-
-    emb_sin = np.sin(out)  # (M, D/2)
-    emb_cos = np.cos(out)  # (M, D/2)
-
-    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
-    return emb
-
-
-def modulate(x, shift, scale):
-    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
 
 class BottleneckPatchEmbed(nn.Module):
@@ -322,20 +266,6 @@ class LabelEmbedder(nn.Module):
         return embeddings
 
 
-def scaled_dot_product_attention(query, key, value, dropout_p=0.0) -> torch.Tensor:
-    L, S = query.size(-2), key.size(-2)
-    scale_factor = 1 / math.sqrt(query.size(-1))
-    attn_bias = torch.zeros(query.size(0), 1, L, S, dtype=query.dtype).to("mps")
-
-    # with torch.cuda.amp.autocast(enabled=False):
-    attn_weight = query.float() @ key.float().transpose(-2, -1) * scale_factor
-
-    attn_weight += attn_bias
-    attn_weight = torch.softmax(attn_weight, dim=-1)
-    attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
-    return attn_weight @ value
-
-
 class Attention(nn.Module):
     def __init__(
         self,
@@ -365,19 +295,12 @@ class Attention(nn.Module):
             .reshape(B, N, 3, self.num_heads, C // self.num_heads)
             .permute(2, 0, 3, 1, 4)
         )
-        q, k, v = (
-            qkv[0],
-            qkv[1],
-            qkv[2],
-        )  # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = (qkv[0], qkv[1], qkv[2])
 
-        q = self.q_norm(q)
-        k = self.k_norm(k)
+        q, k = self.q_norm(q), self.k_norm(k)
+        q, k = rope(q), rope(k)
 
-        q = rope(q)
-        k = rope(k)
-
-        x = scaled_dot_product_attention(
+        x = F.scaled_dot_product_attention(
             q, k, v, dropout_p=self.attn_drop.p if self.training else 0.0
         )
 
@@ -418,7 +341,7 @@ class FinalLayer(nn.Module):
             nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size, bias=True)
         )
 
-    @torch.compile
+    @torch.compile(dynamic=False, fullgraph=True)
     def forward(self, x, c):
         shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
         x = modulate(self.norm_final(x), shift, scale)
@@ -447,7 +370,7 @@ class JiTBlock(nn.Module):
             nn.SiLU(), nn.Linear(hidden_size, 6 * hidden_size, bias=True)
         )
 
-    @torch.compile
+    @torch.compile(dynamic=False, fullgraph=True)
     def forward(self, x, c, feat_rope=None):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
             self.adaLN_modulation(c).chunk(6, dim=-1)
@@ -565,22 +488,31 @@ class JiT(nn.Module):
         nn.init.xavier_uniform_(w1.view([w1.shape[0], -1]))
         w2 = self.x_embedder.proj2.weight.data
         nn.init.xavier_uniform_(w2.view([w2.shape[0], -1]))
+        assert self.x_embedder.proj2.bias is not None
         nn.init.constant_(self.x_embedder.proj2.bias, 0)
 
         # Initialize label embedding table:
         nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
 
-        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
-        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+        t_mlp_0 = self.t_embedder.mlp[0]
+        t_mlp_2 = self.t_embedder.mlp[2]
+        assert isinstance(t_mlp_0, nn.Linear) and isinstance(t_mlp_2, nn.Linear)
+        nn.init.normal_(t_mlp_0.weight, std=0.02)
+        nn.init.normal_(t_mlp_2.weight, std=0.02)
 
         # Zero-out adaLN modulation layers:
         for block in self.blocks:
-            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
-            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+            assert isinstance(block, JiTBlock)
+            ada_ln = block.adaLN_modulation[-1]
+            assert isinstance(ada_ln, nn.Linear)
+            nn.init.constant_(ada_ln.weight, 0)
+            nn.init.constant_(ada_ln.bias, 0)
 
         # Zero-out output layers:
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
+        final_ada_ln = self.final_layer.adaLN_modulation[-1]
+        assert isinstance(final_ada_ln, nn.Linear)
+        nn.init.constant_(final_ada_ln.weight, 0)
+        nn.init.constant_(final_ada_ln.bias, 0)
 
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)

@@ -19,7 +19,7 @@ def load_checkpoint(experiment: str, checkpoint_dir: str, device: str) -> Denois
 
     config = DenoiserConfig(**ckpt["config"])
     config.cfg_scale = 2.5
-    config.noise_scale = 0.8
+    config.noise_scale = 0.9
     model = Denoiser(config, device).to(device)
     summary(model, depth=3)
 

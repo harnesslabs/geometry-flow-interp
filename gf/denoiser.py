@@ -46,15 +46,16 @@ class Denoiser(nn.Module):
             input_size=28,
             patch_size=7,
             in_channels=1,
-            hidden_size=128,
-            depth=3,
-            num_heads=4,
+            hidden_size=256,
+            depth=4,
+            num_heads=8,
             mlp_ratio=4.0,
             attn_drop=0.0,
             proj_drop=0.0,
             num_classes=10,
             in_context_len=4,
-            in_context_start=1,
+            in_context_start=2,
+            bottleneck_dim=64,
         )
         self.ema = {
             k: copy.deepcopy(self.net).to(device).eval().requires_grad_(False)

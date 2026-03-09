@@ -43,11 +43,18 @@ def setup_dataloaders(batch_size):
         MNIST(train=True),
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=2,
+        prefetch_factor=2,
         drop_last=True,
+        persistent_workers=True,
     )
     test_loader = torch.utils.data.DataLoader(
-        MNIST(train=False), batch_size=batch_size, shuffle=False, num_workers=0
+        MNIST(train=False),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=2,
+        prefetch_factor=2,
+        persistent_workers=True,
     )
     return train_loader, test_loader
 

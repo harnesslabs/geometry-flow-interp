@@ -164,6 +164,7 @@ def train(args):
 
             model.update_ema()
 
+            torch.accelerator.synchronize()
             dt = time.time() - iter_start
 
             global_step += 1
