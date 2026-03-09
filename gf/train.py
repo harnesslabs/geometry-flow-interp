@@ -3,7 +3,10 @@ import dataclasses
 import os
 import time
 
+import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchinfo import summary
 
@@ -38,12 +41,46 @@ parser.add_argument("--grad-norm", type=float, default=1.0)
 # experiment
 parser.add_argument("--experiment", type=str, default="default")
 parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
-parser.add_argument("--checkpoint-interval", type=int, default=8)
+parser.add_argument("--checkpoint-interval", type=int, default=2)
 parser.add_argument("--resume", action="store_true")
 parser.add_argument("--offline", action="store_true", help="disable wandb")
 
 
-def setup_optimizer(model, args):
+def _train_eval_classifier(train_loader, val_loader, device):
+    ds, t0 = train_loader.dataset, time.time()
+    clf = nn.Sequential(
+        nn.Flatten(),
+        nn.Linear(np.prod(ds.shape), 1024), nn.BatchNorm1d(1024), nn.ReLU(),
+        nn.Linear(1024, 512), nn.BatchNorm1d(512), nn.ReLU(),
+        nn.Linear(512, 256), nn.BatchNorm1d(256), nn.ReLU(),
+        nn.Linear(256, ds.n_classes),
+    ).to(device)  # fmt: skip
+    with torch.random.fork_rng(devices=[0], device_type=device):
+        torch.manual_seed(0)
+        opt, epochs = torch.optim.AdamW(clf.parameters(), lr=1e-3), 2
+        sched = torch.optim.lr_scheduler.OneCycleLR(
+            opt, max_lr=8e-2, steps_per_epoch=len(train_loader), epochs=epochs
+        )
+        for _ in range(epochs):
+            for x, y in train_loader:
+                opt.zero_grad(set_to_none=True)
+                loss = F.cross_entropy(clf(x.to(device)), y.to(device))
+                loss.backward()
+                opt.step()
+                sched.step()
+    clf.eval().requires_grad_(False)
+    correct = sum(
+        (clf(x.to(device)).argmax(1) == y.to(device)).sum().item()
+        for x, y in val_loader
+    )
+    print(
+        f"  eval classifier — val acc={correct / len(val_loader.dataset):.4f} "
+        f"({time.time() - t0:.1f}s)"
+    )
+    return clf
+
+
+def _setup_optimizer(model, args):
     if args.adamw:
         return torch.optim.AdamW(model.parameters(), lr=args.lr)
 
@@ -119,7 +156,7 @@ def train(args):
     summary(model, depth=3)
     wandb.config.update({"DenoiserConfig": dataclasses.asdict(model.config)})
 
-    optimizer = setup_optimizer(model, args)
+    optimizer = _setup_optimizer(model, args)
 
     total_steps = len(train_loader) * args.epochs
     warmup_steps = int(total_steps * args.warmup)
@@ -135,14 +172,15 @@ def train(args):
     ckpt = CheckpointManager(args, model, optimizer, scheduler, device)
     start_epoch, global_step = ckpt.load_if_available()
 
+    classifier = _train_eval_classifier(train_loader, val_loader, device)
+
     for epoch in range(start_epoch, args.epochs):
         # training
         model.train()
         data_start = time.time()
         for x, y in train_loader:
             optimizer.zero_grad(set_to_none=True)
-            x = x.to(device)  # , non_blocking=True)
-            y = y.to(device)  # , non_blocking=True)
+            x, y = x.to(device), y.to(device)
 
             data_dt = time.time() - data_start
             iter_start = time.time()
@@ -200,31 +238,48 @@ def train(args):
 
         model.eval()
         losses: list[float] = []
-        mses: list[float] = []
 
-        with torch.no_grad():
+        with torch.inference_mode():
             params = model.swap_ema()
-            for x, y in val_loader:
-                # non_blocking=True makes evals non-deterministic for some reason
-                x = x.to(device)
-                y = y.to(device)
 
+            # val/loss
+            for x, y in val_loader:
+                x, y = x.to(device), y.to(device)
                 with utils.maybe_autocast(device):
                     loss = model(x, y)
-                    pred = model.generate(y)
-
                 losses.append(loss.item())
-                mses.append((pred - x).pow(2).mean().item())
+
+            # val/acc
+            num_per_class = 10
+            labels = torch.arange(10, device=device).repeat_interleave(num_per_class)
+            with utils.maybe_autocast(device):
+                samples = model.generate(labels)
+            preds = classifier(samples).argmax(dim=1)
+            acc = (preds == labels).float().mean().item()
+
+            # val/samples
+            grid = (samples + 1) / 2  # [-1,1] → [0,1]
+            grid = grid.clamp(0, 1)
+            rows = [
+                torch.cat(
+                    [grid[i * num_per_class + j] for j in range(num_per_class)], dim=2
+                )
+                for i in range(10)
+            ]
+            grid_img = torch.cat(rows, dim=1)  # (1, H*10, W*10)
 
             model.swap_params(params)
 
         avg_val_loss = sum(losses) / len(losses)
-        avg_mse = sum(mses) / len(mses)
 
-        val_metrics = {"val/loss": avg_val_loss, "val/mse": avg_mse}
+        val_metrics = {
+            "val/loss": avg_val_loss,
+            "val/acc": acc,
+            "val/samples": wandb.Image(grid_img.cpu().float()),
+        }
         wandb.log(val_metrics, step=global_step)
 
-        print(f"val/loss={avg_val_loss:.4f} val/mse={avg_mse:.6f}")
+        print(f"val/loss={avg_val_loss:.4f} val/acc={acc:.4f}")
 
         ckpt.save(epoch + 1, global_step, tag="last")
 
