@@ -9,6 +9,8 @@ Further contributions from @karpathy and @chrisjmccormick.
 import torch
 from torch import Tensor
 
+torch._dynamo.config.cache_size_limit = 16
+
 # -----------------------------------------------------------------------------
 """
 Good old AdamW optimizer, fused kernel.

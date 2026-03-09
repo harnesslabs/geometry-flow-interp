@@ -341,7 +341,7 @@ class FinalLayer(nn.Module):
             nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size, bias=True)
         )
 
-    @torch.compile(dynamic=False, fullgraph=True)
+    @torch.compile(dynamic=False, fullgraph=False)
     def forward(self, x, c):
         shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
         x = modulate(self.norm_final(x), shift, scale)
@@ -370,7 +370,7 @@ class JiTBlock(nn.Module):
             nn.SiLU(), nn.Linear(hidden_size, 6 * hidden_size, bias=True)
         )
 
-    @torch.compile(dynamic=False, fullgraph=True)
+    @torch.compile(dynamic=False, fullgraph=False)
     def forward(self, x, c, feat_rope=None):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
             self.adaLN_modulation(c).chunk(6, dim=-1)
@@ -471,7 +471,7 @@ class JiT(nn.Module):
         # Initialize transformer layers:
         def _basic_init(module):
             if isinstance(module, nn.Linear):
-                torch.nn.init.xavier_uniform_(module.weight)
+                torch.nn.init.orthogonal_(module.weight)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
 
@@ -568,49 +568,35 @@ class JiT(nn.Module):
         return output
 
 
-def JiT_B_4(**kwargs):
+def JiT_S_7(**kwargs):
     return JiT(
         depth=4,
-        hidden_size=256,
-        num_heads=8,
-        bottleneck_dim=64,
-        in_context_len=15,
-        in_context_start=2,
-        patch_size=4,
-        **kwargs,
-    )
-
-
-def JiT_B_7(**kwargs):
-    return JiT(
-        depth=4,
-        hidden_size=256,
-        num_heads=8,
-        bottleneck_dim=64,
-        in_context_len=15,
+        hidden_size=192,
+        num_heads=6,
+        mlp_ratio=2.0,
+        bottleneck_dim=48,
+        in_context_len=4,
         in_context_start=2,
         patch_size=7,
         **kwargs,
     )
 
 
-def JiT_L_7(**kwargs):
+def JiT_M_7(**kwargs):
     return JiT(
-        depth=12,
-        hidden_size=768,
-        num_heads=12,
-        bottleneck_dim=128,
-        in_context_len=32,
-        in_context_start=4,
+        depth=4,
+        hidden_size=256,
+        num_heads=8,
+        mlp_ratio=2.0,
+        bottleneck_dim=48,
+        in_context_len=4,
+        in_context_start=2,
         patch_size=7,
-        attn_drop=0.2,
-        proj_drop=0.2,
         **kwargs,
     )
 
 
 models = {
-    "JiT-B/4": JiT_B_4,
-    "JiT-B/7": JiT_B_7,
-    "JiT-L/7": JiT_L_7,
+    "JiT-S/7": JiT_S_7,
+    "JiT-M/7": JiT_M_7,
 }
