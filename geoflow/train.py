@@ -11,11 +11,11 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchinfo import summary
 
 import wandb
-from gf import utils
-from gf.checkpoint import CheckpointManager
-from gf.denoiser import Denoiser, DenoiserConfig
-from gf.mnist import setup_dataloaders
-from gf.model import models
+from geoflow import utils
+from geoflow.checkpoint import CheckpointManager
+from geoflow.denoiser import Denoiser, DenoiserConfig
+from geoflow.mnist import setup_dataloaders
+from geoflow.model import models
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default="JiT-S/7", choices=models.keys())
@@ -84,7 +84,7 @@ def _setup_optimizer(model, args):
     if args.adamw:
         return torch.optim.AdamW(model.parameters(), lr=args.lr)
 
-    from gf.optim import MuonAdamW
+    from geoflow.optim import MuonAdamW
 
     muon_params = []
     adamw_params = []

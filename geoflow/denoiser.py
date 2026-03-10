@@ -5,7 +5,7 @@ from typing import Literal
 import torch
 import torch.nn as nn
 
-from gf.model import models
+from geoflow.model import models
 
 
 @dataclass

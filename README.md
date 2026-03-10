@@ -12,8 +12,8 @@ uv sync
 
 ```bash
 # train default model (use --offline to skip wandb)
-uv run python -m gf.train --offline
+uv run python -m geoflow.train --offline
 
 # generate sample grid
-uv run python -m gf.generate --experiment default
+uv run python -m geoflow.generate --experiment default
 ```

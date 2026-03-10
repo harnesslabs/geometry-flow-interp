@@ -5,8 +5,8 @@ import torch
 from torchinfo import summary
 from torchvision.utils import save_image
 
-from gf import utils
-from gf.denoiser import Denoiser, DenoiserConfig
+from geoflow import utils
+from geoflow.denoiser import Denoiser, DenoiserConfig
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--experiment", type=str, default="default")
