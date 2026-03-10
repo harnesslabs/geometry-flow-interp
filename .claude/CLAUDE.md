@@ -1,6 +1,6 @@
 ## Code Environment
 
-- See @README.md for setup and run commands.
+- See @README.md for setup and run commands. **Always** use `uv run python example.py` or `uv run python -m ...` for python.
 - Use astral (uv, ty, ruff) for best practices. After modifying any Python file, **always** run:
   ```bash
   uv run ruff format <file> # format the file

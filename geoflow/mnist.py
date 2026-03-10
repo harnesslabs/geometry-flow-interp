@@ -20,8 +20,8 @@ class MNIST(Dataset):
         self.rotate = rotate
 
     @property
-    def shape(self) -> int:
-        return np.prod(self.x.shape[1:]).item()
+    def shape(self) -> tuple[int, int, int]:
+        return self.x.shape[1:]  # (C, H, W)
 
     @property
     def n_classes(self) -> int:
@@ -35,7 +35,7 @@ class MNIST(Dataset):
         if self.rotate:
             angle = random.uniform(0, 360)
             x = F.rotate(x, angle=-angle, fill=[-1])  # normalized fill value
-        return x.flatten(), self.c[idx]
+        return x, self.c[idx]
 
 
 def setup_dataloaders(batch_size):
@@ -43,11 +43,18 @@ def setup_dataloaders(batch_size):
         MNIST(train=True),
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=2,
+        prefetch_factor=2,
         drop_last=True,
+        persistent_workers=True,
     )
     test_loader = torch.utils.data.DataLoader(
-        MNIST(train=False), batch_size=batch_size, shuffle=False, num_workers=0
+        MNIST(train=False),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=2,
+        prefetch_factor=2,
+        persistent_workers=True,
     )
     return train_loader, test_loader
 

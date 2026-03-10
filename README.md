@@ -1,19 +1,20 @@
 # Geometric Structure of Flow Matching
 
-## Getting Started
+Investigating the internal geometry of flow matching models.
+
+## Setup
 
 ```bash
-# install dependencies
 brew install uv
 uv sync
 ```
 
-### Train
+## Usage
 
 ```bash
-# train default model (use --offline to skip wandb)
-uv run python -m gf.train --offline
+# train (use --offline to skip wandb)
+uv run python -m geoflow.train --offline
 
-# generate sample grid
-uv run python -m gf.generate --experiment default
+# generate samples from a checkpoint
+uv run python -m geoflow.generate --experiment <name>
 ```

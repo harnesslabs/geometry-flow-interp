@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "einops>=0.8.2",
     "matplotlib>=3.10.8",
     "torch>=2.10.0",
     "torchinfo>=1.8.0",
@@ -17,9 +18,3 @@ dev = [
     "ruff>=0.15.2",
     "ty>=0.0.18",
 ]
-
-[tool.uv]
-package = true
-
-[tool.setuptools]
-packages = ["gf"]
