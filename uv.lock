@@ -235,7 +235,7 @@ wheels = [
 [[package]]
 name = "geometry-flow-interp"
 version = "0.1.0"
-source = { editable = "." }
+source = { virtual = "." }
 dependencies = [
     { name = "einops" },
     { name = "matplotlib" },

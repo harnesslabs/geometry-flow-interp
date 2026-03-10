@@ -18,9 +18,3 @@ dev = [
     "ruff>=0.15.2",
     "ty>=0.0.18",
 ]
-
-[tool.uv]
-package = true
-
-[tool.setuptools]
-packages = ["gf"]

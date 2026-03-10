@@ -92,14 +92,14 @@ def _setup_optimizer(model, args):
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        if (
+        if (  # blocks.*.attn.*.weight & blocks.*.mlp.*.weight
             ".blocks." in name
             and name.endswith(".weight")
             and param.ndim == 2
             and ".adaLN_modulation." not in name
         ):
             muon_params.append(param)
-        else:
+        else:  # everything else
             adamw_params.append(param)
 
     param_groups = [
@@ -179,11 +179,11 @@ def train(args):
         model.train()
         data_start = time.time()
         for x, y in train_loader:
-            optimizer.zero_grad(set_to_none=True)
             x, y = x.to(device), y.to(device)
-
             data_dt = time.time() - data_start
+
             iter_start = time.time()
+            optimizer.zero_grad(set_to_none=True)
 
             with utils.maybe_autocast(device):
                 loss = model(x, y)
@@ -192,7 +192,7 @@ def train(args):
             gnorm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), args.grad_norm
             ).item()
-            if not args.adamw:
+            if not args.adamw:  # warmup muon momentum & decay weight decay
                 frac = min(global_step / warmup_steps, 1) if warmup_steps > 0 else 1
                 muon_momentum = max(args.muon_momentum - 0.10, 0.0) + frac * 0.10
                 muon_wd = args.muon_wd * (1 - global_step / total_steps)
@@ -237,12 +237,11 @@ def train(args):
             continue
 
         model.eval()
-        losses: list[float] = []
-
         with torch.inference_mode():
             params = model.swap_ema()
 
             # val/loss
+            losses: list[float] = []
             for x, y in val_loader:
                 x, y = x.to(device), y.to(device)
                 with utils.maybe_autocast(device):
@@ -258,8 +257,7 @@ def train(args):
             acc = (preds == labels).float().mean().item()
 
             # val/samples
-            grid = (samples + 1) / 2  # [-1,1] → [0,1]
-            grid = grid.clamp(0, 1)
+            grid = ((samples + 1) / 2).clamp(0, 1)  # [-1,1] → [0,1]
             rows = [
                 torch.cat(
                     [grid[i * num_per_class + j] for j in range(num_per_class)], dim=2
