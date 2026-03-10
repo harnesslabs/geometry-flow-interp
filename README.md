@@ -1,6 +1,6 @@
-# Geometric Structure of Flow Matching
+# Interpreting the Geometric Structure of Flow Matching
 
-Investigating the internal geometry of flow matching models.
+Currently training a [JiT](https://arxiv.org/abs/2511.13720)-style ViT with x-prediction and v-loss on rotated class-conditional MNIST. 
 
 ## Setup
 
@@ -13,8 +13,17 @@ uv sync
 
 ```bash
 # train (use --offline to skip wandb)
-uv run python -m geoflow.train --offline
+uv run python -m scripts.train --offline
 
 # generate samples from a checkpoint
-uv run python -m geoflow.generate --experiment <name>
+uv run python -m scripts.generate --experiment <name>
+```
+
+## File Structure
+
+```bash
+geoflow/       # library (model, denoiser, checkpoint, optim, etc.)
+scripts/       # entry points
+  train.py
+  generate.py
 ```
