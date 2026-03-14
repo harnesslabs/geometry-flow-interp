@@ -38,9 +38,43 @@ class MNIST(Dataset):
         return x, self.c[idx]
 
 
-def setup_dataloaders(batch_size):
+class CIFAR10(Dataset):
+    def __init__(
+        self,
+        root: str = "~/.cache/data",
+        train: bool = True,
+    ):
+        raw = datasets.CIFAR10(root=root, train=train, download=True)
+        self.x = (
+            torch.from_numpy(raw.data).permute(0, 3, 1, 2).float() / 255.0 * 2.0 - 1.0
+        )  # (N, 3, 32, 32)
+        self.c = torch.tensor(raw.targets)  # (N,) class 0-9
+
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        return self.x.shape[1:]  # (C, H, W)
+
+    @property
+    def n_classes(self) -> int:
+        return np.unique(self.c).shape[0]
+
+    def __len__(self) -> int:
+        return self.x.shape[0]
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:  # type: ignore[override]
+        return self.x[idx], self.c[idx]
+
+
+_DATASETS = {
+    "mnist": MNIST,
+    "cifar10": CIFAR10,
+}
+
+
+def setup_dataloaders(batch_size, dataset="mnist"):
+    ds_cls = _DATASETS[dataset]
     train_loader = torch.utils.data.DataLoader(
-        MNIST(train=True),
+        ds_cls(train=True),
         batch_size=batch_size,
         shuffle=True,
         num_workers=2,
@@ -49,7 +83,7 @@ def setup_dataloaders(batch_size):
         persistent_workers=True,
     )
     test_loader = torch.utils.data.DataLoader(
-        MNIST(train=False),
+        ds_cls(train=False),
         batch_size=batch_size,
         shuffle=False,
         num_workers=2,

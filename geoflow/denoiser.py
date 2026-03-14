@@ -20,6 +20,7 @@ class DenoiserConfig:
     P_std: float = 0.8
     t_eps: float = 5e-2
     noise_scale: float = 1.0
+    n_iterations: int = 1
     #
     ema_decay: tuple[float, ...] = (0.9980, 0.9995)
     #
@@ -36,6 +37,7 @@ class Denoiser(nn.Module):
             input_size=config.input_size,
             in_channels=config.in_channels,
             num_classes=config.num_classes,
+            n_iterations=config.n_iterations,
         )
         self.ema = {
             k: copy.deepcopy(self.net).to(device).eval().requires_grad_(False)
@@ -63,10 +65,16 @@ class Denoiser(nn.Module):
         z = t * x + (1 - t) * e
         v = self._to_velocity(x, z, t)
 
-        x_pred = self.net(z, t.flatten(), cond_dropped)
-        v_pred = self._to_velocity(x_pred, z, t)
+        if self.config.n_iterations > 1 and self.training:
+            _, all_x_preds = self.net(z, t.flatten(), cond_dropped, return_all=True)
+            loss = sum(
+                ((v - self._to_velocity(xp, z, t)) ** 2).mean() for xp in all_x_preds
+            ) / len(all_x_preds)
+        else:
+            x_pred = self.net(z, t.flatten(), cond_dropped)
+            v_pred = self._to_velocity(x_pred, z, t)
+            loss = ((v - v_pred) ** 2).mean()
 
-        loss = ((v - v_pred) ** 2).mean()
         return loss
 
     @torch.no_grad()

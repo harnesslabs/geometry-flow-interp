@@ -404,6 +404,7 @@ class JiT(nn.Module):
         bottleneck_dim=128,
         in_context_len=4,
         in_context_start=2,
+        n_iterations=1,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -415,6 +416,7 @@ class JiT(nn.Module):
         self.in_context_len = in_context_len
         self.in_context_start = in_context_start
         self.num_classes = num_classes
+        self.n_iterations = n_iterations
 
         # time and class embed
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -464,6 +466,11 @@ class JiT(nn.Module):
 
         # linear predict
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
+
+        # iteration feedback projection
+        self.pred_proj = nn.Linear(
+            patch_size * patch_size * self.out_channels, hidden_size, bias=True
+        )
 
         self.initialize_weights()
 
@@ -517,6 +524,10 @@ class JiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
+        # Zero-out pred_proj so first iteration is identity with h_prev:
+        nn.init.constant_(self.pred_proj.weight, 0)
+        nn.init.constant_(self.pred_proj.bias, 0)
+
     def unpatchify(self, x, p):
         """
         x: (N, T, patch_size**2 * C)
@@ -531,40 +542,59 @@ class JiT(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
 
-    def forward(self, x, t, y):
+    def forward(self, x, t, y, n_iterations=None, return_all=False):
         """
         x: (N, C, H, W)
         t: (N,)
         y: (N,)
+        n_iterations: override self.n_iterations at inference
+        return_all: return all intermediate outputs for all-iteration loss
         """
-        # class and time embeddings
+        n_iters = n_iterations if n_iterations is not None else self.n_iterations
+
+        # class and time embeddings (computed once)
         t_emb = self.t_embedder(t)
         y_emb = self.y_embedder(y)
         c = t_emb + y_emb
 
-        # forward JiT
-        x = self.x_embedder(x)
-        x += self.pos_embed
+        # initial patch embedding (computed once)
+        x_emb = self.x_embedder(x) + self.pos_embed
+        B, N, _ = x_emb.shape
 
-        for i, block in enumerate(self.blocks):
-            # in-context
-            if self.in_context_len > 0 and i == self.in_context_start:
-                in_context_tokens = y_emb.unsqueeze(1).repeat(1, self.in_context_len, 1)
-                in_context_tokens += self.in_context_posemb
-                x = torch.cat([in_context_tokens, x], dim=1)
-            x = block(
-                x,
-                c,
-                self.feat_rope
-                if i < self.in_context_start
-                else self.feat_rope_incontext,
-            )
+        # iteration state
+        h_prev = x_emb
+        pred_patches = x_emb.new_zeros(B, N, self.patch_size**2 * self.out_channels)
+        all_outputs = []
 
-        x = x[:, self.in_context_len :]
+        for _ in range(n_iters):
+            h = h_prev + self.pred_proj(pred_patches)
 
-        x = self.final_layer(x, c)
-        output = self.unpatchify(x, self.patch_size)
+            for i, block in enumerate(self.blocks):
+                if self.in_context_len > 0 and i == self.in_context_start:
+                    ctx = (
+                        y_emb.unsqueeze(1).expand(-1, self.in_context_len, -1)
+                        + self.in_context_posemb
+                    )
+                    h = torch.cat([ctx, h], dim=1)
+                h = block(
+                    h,
+                    c,
+                    self.feat_rope
+                    if i < self.in_context_start
+                    else self.feat_rope_incontext,
+                )
 
+            h = h[:, self.in_context_len :]
+            h_prev = h
+            pred_patches = self.final_layer(h, c)
+
+            if return_all:
+                all_outputs.append(self.unpatchify(pred_patches, self.patch_size))
+
+        output = self.unpatchify(pred_patches, self.patch_size)
+
+        if return_all:
+            return output, all_outputs
         return output
 
 
@@ -578,6 +608,20 @@ def JiT_S_7(**kwargs):
         in_context_len=4,
         in_context_start=2,
         patch_size=7,
+        **kwargs,
+    )
+
+
+def JiT_S_8(**kwargs):
+    return JiT(
+        depth=4,
+        hidden_size=192,
+        num_heads=6,
+        mlp_ratio=2.0,
+        bottleneck_dim=48,
+        in_context_len=4,
+        in_context_start=2,
+        patch_size=8,
         **kwargs,
     )
 
@@ -598,5 +642,6 @@ def JiT_M_7(**kwargs):
 
 models = {
     "JiT-S/7": JiT_S_7,
+    "JiT-S/8": JiT_S_8,
     "JiT-M/7": JiT_M_7,
 }

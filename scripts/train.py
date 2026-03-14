@@ -2,6 +2,7 @@ import argparse
 import dataclasses
 import os
 import time
+import warnings
 
 import numpy as np
 import torch
@@ -13,14 +14,21 @@ from torchinfo import summary
 import wandb
 from geoflow import utils
 from geoflow.checkpoint import CheckpointManager
+from geoflow.datasets import setup_dataloaders
 from geoflow.denoiser import Denoiser, DenoiserConfig
-from geoflow.mnist import setup_dataloaders
+from geoflow.fid import compute_fid_is
 from geoflow.model import models
 
+warnings.filterwarnings(
+    "ignore", message=".*dtype.*align.*", category=DeprecationWarning
+)
+
 parser = argparse.ArgumentParser()
-parser.add_argument("--model", type=str, default="JiT-S/7", choices=models.keys())
+
+parser.add_argument("--model", type=str, default="JiT-S/8", choices=models.keys())
 parser.add_argument("--bs", "--batch-size", type=int, default=256)
 parser.add_argument("--epochs", type=int, default=100)
+parser.add_argument("--n-iterations", type=int, default=1)
 
 # optimizer
 parser.add_argument("--lr", "--learning-rate", type=float, default=3e-4)
@@ -39,11 +47,34 @@ parser.add_argument("--cosine", action="store_true", help="lr anneal")
 parser.add_argument("--grad-norm", type=float, default=1.0)
 
 # experiment
+parser.add_argument(
+    "--dataset", type=str, default="cifar10", choices=["mnist", "cifar10"]
+)
 parser.add_argument("--experiment", type=str, default="default")
 parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
 parser.add_argument("--checkpoint-interval", type=int, default=2)
 parser.add_argument("--resume", action="store_true")
 parser.add_argument("--offline", action="store_true", help="disable wandb")
+parser.add_argument("--fid-samples", type=int, default=10000, help="samples for FID/IS")
+
+
+def _generate_samples(model, device, num_samples, num_classes=10, batch_size=256):
+    """Generate samples with autocast, return uint8 CPU tensor."""
+    all_samples = []
+    remaining = num_samples
+    while remaining > 0:
+        B = min(batch_size, remaining)
+        labels = torch.randint(0, num_classes, (B,), device=device)
+        with utils.maybe_autocast(device):
+            samples = model.generate(labels)  # [-1, 1]
+        imgs = ((samples + 1) / 2).clamp(0, 1)
+        all_samples.append((imgs * 255).to(torch.uint8).cpu())
+        remaining -= B
+        print(
+            f"  generating samples: {num_samples - remaining}/{num_samples}", end="\r"
+        )
+    print()
+    return torch.cat(all_samples, dim=0)
 
 
 def _train_eval_classifier(train_loader, val_loader, device):
@@ -140,7 +171,7 @@ def _setup_optimizer(model, args):
 
 
 def train(args):
-    train_loader, val_loader = setup_dataloaders(args.bs)
+    train_loader, val_loader = setup_dataloaders(args.bs, args.dataset)
     device = utils.get_torch_device().type
 
     ds = train_loader.dataset
@@ -150,6 +181,7 @@ def train(args):
             input_size=ds.shape[1],
             in_channels=ds.shape[0],
             num_classes=ds.n_classes,
+            n_iterations=args.n_iterations,
         ),
         device,
     ).to(device)
@@ -237,9 +269,9 @@ def train(args):
             continue
 
         model.eval()
-        with torch.inference_mode():
-            params = model.swap_ema()
+        params = model.swap_ema()
 
+        with torch.inference_mode():
             # val/loss
             losses: list[float] = []
             for x, y in val_loader:
@@ -250,7 +282,9 @@ def train(args):
 
             # val/acc
             num_per_class = 10
-            labels = torch.arange(10, device=device).repeat_interleave(num_per_class)
+            labels = torch.arange(ds.n_classes, device=device).repeat_interleave(
+                num_per_class
+            )
             with utils.maybe_autocast(device):
                 samples = model.generate(labels)
             preds = classifier(samples).argmax(dim=1)
@@ -262,11 +296,17 @@ def train(args):
                 torch.cat(
                     [grid[i * num_per_class + j] for j in range(num_per_class)], dim=2
                 )
-                for i in range(10)
+                for i in range(ds.n_classes)
             ]
-            grid_img = torch.cat(rows, dim=1)  # (1, H*10, W*10)
+            grid_img = torch.cat(rows, dim=1)  # (C, H*10, W*10)
 
-            model.swap_params(params)
+        # val/fid & val/is
+
+        stats_path = os.path.join("fid_stats", f"{args.dataset}_train.npz")
+        fid_samples = _generate_samples(model, device, args.fid_samples, ds.n_classes)
+        fid_is = compute_fid_is(fid_samples, stats_path, device, train_loader)
+
+        model.swap_params(params)
 
         avg_val_loss = sum(losses) / len(losses)
 
@@ -274,10 +314,14 @@ def train(args):
             "val/loss": avg_val_loss,
             "val/acc": acc,
             "val/samples": wandb.Image(grid_img.cpu().float()),
+            **fid_is,
         }
         wandb.log(val_metrics, step=global_step)
 
-        print(f"val/loss={avg_val_loss:.4f} val/acc={acc:.4f}")
+        print(
+            f"val/loss={avg_val_loss:.4f} val/acc={acc:.4f} "
+            f"val/fid={fid_is['val/fid']:.2f} val/is={fid_is['val/is_mean']:.2f}±{fid_is['val/is_std']:.2f}"
+        )
 
         ckpt.save(epoch + 1, global_step, tag="last")
 

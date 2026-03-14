@@ -1,4 +1,5 @@
 checkpoints/
+fid_stats/
 wandb/
 
 # Python-generated files
