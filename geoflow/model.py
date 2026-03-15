@@ -634,15 +634,16 @@ def JiT_M_7(**kwargs):
     )
 
 
-def JiT_B_16(**kwargs):
+def JiT_B_8(**kwargs):
     return JiT(
-        depth=12,
-        hidden_size=768,
-        num_heads=12,
+        depth=8,
+        hidden_size=512,
+        num_heads=8,
+        mlp_ratio=2.0,
         bottleneck_dim=128,
-        in_context_len=32,
-        in_context_start=8,
-        patch_size=16,
+        in_context_len=4,
+        in_context_start=4,
+        patch_size=8,
         **kwargs,
     )
 
@@ -651,4 +652,5 @@ models = {
     "JiT-S/7": JiT_S_7,
     "JiT-S/8": JiT_S_8,
     "JiT-M/7": JiT_M_7,
+    "JiT-B/8": JiT_B_8,
 }

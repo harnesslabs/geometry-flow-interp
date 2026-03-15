@@ -20,14 +20,16 @@ from geoflow.fid import compute_fid_is
 from geoflow.model import models
 
 warnings.filterwarnings(
-    "ignore", message=".*dtype.*align.*", category=DeprecationWarning
+    "ignore",
+    message=".*dtype.*align.*",
+    category=np.exceptions.VisibleDeprecationWarning,
 )
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("--model", type=str, default="JiT-S/8", choices=models.keys())
+parser.add_argument("--model", type=str, default="JiT-B/8", choices=models.keys())
 parser.add_argument("--bs", "--batch-size", type=int, default=256)
-parser.add_argument("--epochs", type=int, default=200)
+parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--n-iterations", type=int, default=1)
 
 # optimizer
@@ -52,7 +54,7 @@ parser.add_argument(
 )
 parser.add_argument("--experiment", type=str, default="default")
 parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
-parser.add_argument("--checkpoint-interval", type=int, default=5)
+parser.add_argument("--checkpoint-interval", type=int, default=10)
 parser.add_argument("--resume", action="store_true")
 parser.add_argument("--offline", action="store_true", help="disable wandb")
 parser.add_argument("--fid-samples", type=int, default=10000, help="samples for FID/IS")
@@ -302,6 +304,9 @@ def train(args):
                 for i in range(ds.n_classes)
             ]
             grid_img = torch.cat(rows, dim=1)  # (C, H*10, W*10)
+            grid_img = F.interpolate(
+                grid_img.unsqueeze(0), scale_factor=4, mode="nearest"
+            ).squeeze(0)
 
         # val/fid & val/is
 
