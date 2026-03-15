@@ -29,7 +29,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("--model", type=str, default="JiT-B/8", choices=models.keys())
 parser.add_argument("--bs", "--batch-size", type=int, default=256)
-parser.add_argument("--epochs", type=int, default=100)
+parser.add_argument("--epochs", type=int, default=600)
 parser.add_argument("--n-iterations", type=int, default=1)
 
 # optimizer
@@ -213,7 +213,7 @@ def train(args):
         model.train()
         data_start = time.time()
         for x, y in train_loader:
-            x, y = x.to(device, non_blocking=False), y.to(device, non_blocking=False)
+            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             data_dt = time.time() - data_start
 
             iter_start = time.time()
@@ -278,8 +278,8 @@ def train(args):
             losses: list[float] = []
             for x, y in val_loader:
                 x, y = (
-                    x.to(device, non_blocking=False),
-                    y.to(device, non_blocking=False),
+                    x.to(device, non_blocking=True),
+                    y.to(device, non_blocking=True),
                 )
                 with utils.maybe_autocast(device):
                     loss = model(x, y)
