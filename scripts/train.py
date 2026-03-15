@@ -27,7 +27,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("--model", type=str, default="JiT-S/8", choices=models.keys())
 parser.add_argument("--bs", "--batch-size", type=int, default=256)
-parser.add_argument("--epochs", type=int, default=100)
+parser.add_argument("--epochs", type=int, default=200)
 parser.add_argument("--n-iterations", type=int, default=1)
 
 # optimizer
@@ -52,7 +52,7 @@ parser.add_argument(
 )
 parser.add_argument("--experiment", type=str, default="default")
 parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
-parser.add_argument("--checkpoint-interval", type=int, default=2)
+parser.add_argument("--checkpoint-interval", type=int, default=5)
 parser.add_argument("--resume", action="store_true")
 parser.add_argument("--offline", action="store_true", help="disable wandb")
 parser.add_argument("--fid-samples", type=int, default=10000, help="samples for FID/IS")
@@ -211,7 +211,7 @@ def train(args):
         model.train()
         data_start = time.time()
         for x, y in train_loader:
-            x, y = x.to(device), y.to(device)
+            x, y = x.to(device, non_blocking=False), y.to(device, non_blocking=False)
             data_dt = time.time() - data_start
 
             iter_start = time.time()
@@ -275,7 +275,10 @@ def train(args):
             # val/loss
             losses: list[float] = []
             for x, y in val_loader:
-                x, y = x.to(device), y.to(device)
+                x, y = (
+                    x.to(device, non_blocking=False),
+                    y.to(device, non_blocking=False),
+                )
                 with utils.maybe_autocast(device):
                     loss = model(x, y)
                 losses.append(loss.item())

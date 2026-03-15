@@ -558,16 +558,15 @@ class JiT(nn.Module):
         c = t_emb + y_emb
 
         # initial patch embedding (computed once)
-        x_emb = self.x_embedder(x) + self.pos_embed
-        B, N, _ = x_emb.shape
+        h_prev = self.x_embedder(x) + self.pos_embed
 
         # iteration state
-        h_prev = x_emb
-        pred_patches = x_emb.new_zeros(B, N, self.patch_size**2 * self.out_channels)
-        all_outputs = []
+        B, N, _ = h_prev.shape
+        latent = h_prev.new_zeros(B, N, self.patch_size**2 * self.out_channels)
+        outputs = []
 
         for _ in range(n_iters):
-            h = h_prev + self.pred_proj(pred_patches)
+            h = h_prev + self.pred_proj(latent)
 
             for i, block in enumerate(self.blocks):
                 if self.in_context_len > 0 and i == self.in_context_start:
@@ -576,26 +575,21 @@ class JiT(nn.Module):
                         + self.in_context_posemb
                     )
                     h = torch.cat([ctx, h], dim=1)
-                h = block(
-                    h,
-                    c,
+                rope = (
                     self.feat_rope
                     if i < self.in_context_start
-                    else self.feat_rope_incontext,
+                    else self.feat_rope_incontext
                 )
+                h = block(h, c, rope)
 
             h = h[:, self.in_context_len :]
             h_prev = h
-            pred_patches = self.final_layer(h, c)
+            latent = self.final_layer(h, c)
 
             if return_all:
-                all_outputs.append(self.unpatchify(pred_patches, self.patch_size))
+                outputs.append(self.unpatchify(latent, self.patch_size))
 
-        output = self.unpatchify(pred_patches, self.patch_size)
-
-        if return_all:
-            return output, all_outputs
-        return output
+        return outputs if return_all else self.unpatchify(latent, self.patch_size)
 
 
 def JiT_S_7(**kwargs):
@@ -636,6 +630,19 @@ def JiT_M_7(**kwargs):
         in_context_len=4,
         in_context_start=2,
         patch_size=7,
+        **kwargs,
+    )
+
+
+def JiT_B_16(**kwargs):
+    return JiT(
+        depth=12,
+        hidden_size=768,
+        num_heads=12,
+        bottleneck_dim=128,
+        in_context_len=32,
+        in_context_start=8,
+        patch_size=16,
         **kwargs,
     )
 

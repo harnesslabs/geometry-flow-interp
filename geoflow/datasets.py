@@ -81,6 +81,7 @@ def setup_dataloaders(batch_size, dataset="mnist"):
         prefetch_factor=2,
         drop_last=True,
         persistent_workers=True,
+        # pin_memory=True,
     )
     test_loader = torch.utils.data.DataLoader(
         ds_cls(train=False),
@@ -89,6 +90,7 @@ def setup_dataloaders(batch_size, dataset="mnist"):
         num_workers=2,
         prefetch_factor=2,
         persistent_workers=True,
+        # pin_memory=True,
     )
     return train_loader, test_loader
 

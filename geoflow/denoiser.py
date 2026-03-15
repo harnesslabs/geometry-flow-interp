@@ -66,7 +66,7 @@ class Denoiser(nn.Module):
         v = self._to_velocity(x, z, t)
 
         if self.config.n_iterations > 1 and self.training:
-            _, all_x_preds = self.net(z, t.flatten(), cond_dropped, return_all=True)
+            all_x_preds = self.net(z, t.flatten(), cond_dropped, return_all=True)
             loss = sum(
                 ((v - self._to_velocity(xp, z, t)) ** 2).mean() for xp in all_x_preds
             ) / len(all_x_preds)
