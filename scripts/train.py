@@ -30,7 +30,6 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default="JiT-B/8", choices=models.keys())
 parser.add_argument("--bs", "--batch-size", type=int, default=256)
 parser.add_argument("--epochs", type=int, default=100)
-parser.add_argument("--n-iterations", type=int, default=1)
 
 # optimizer
 parser.add_argument("--lr", "--learning-rate", type=float, default=3e-4)
@@ -183,7 +182,6 @@ def train(args):
             input_size=ds.shape[1],
             in_channels=ds.shape[0],
             num_classes=ds.n_classes,
-            n_iterations=args.n_iterations,
         ),
         device,
     ).to(device)

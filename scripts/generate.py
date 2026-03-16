@@ -59,7 +59,6 @@ def main(args: argparse.Namespace) -> None:
     # best args
     model.config.cfg_scale = 3.5
     model.config.noise_scale = 1.0
-    model.net.n_iterations = 4
 
     n_classes = model.config.num_classes
 
