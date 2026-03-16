@@ -29,7 +29,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("--model", type=str, default="JiT-B/8", choices=models.keys())
 parser.add_argument("--bs", "--batch-size", type=int, default=256)
-parser.add_argument("--epochs", type=int, default=600)
+parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--n-iterations", type=int, default=1)
 
 # optimizer
@@ -43,7 +43,7 @@ parser.add_argument("--muon-wd", type=float, default=0.1)
 parser.add_argument("--muon-beta2", type=float, default=0.9)
 parser.add_argument("--muon-momentum", type=float, default=0.95)
 
-parser.add_argument("--warmup", type=float, default=0.01, help="lr warmup")
+parser.add_argument("--warmup", type=float, default=0.05, help="lr warmup")
 parser.add_argument("--adamw", action="store_true", help="only AdamW")
 parser.add_argument("--cosine", action="store_true", help="lr anneal")
 parser.add_argument("--grad-norm", type=float, default=1.0)

@@ -25,7 +25,7 @@ parser.add_argument(
     "--dataset", type=str, default="cifar10", choices=["mnist", "cifar10"]
 )
 parser.add_argument(
-    "--fid-samples", type=int, default=10000, help="number of samples for FID/IS"
+    "--fid-samples", type=int, default=50000, help="number of samples for FID/IS"
 )
 parser.add_argument(
     "--preview", action="store_true", help="preview output, skip metrics"
@@ -57,8 +57,9 @@ def main(args: argparse.Namespace) -> None:
 
     model = load_checkpoint(args.experiment, args.checkpoint_dir, device)
     # best args
-    model.config.cfg_scale = 2.5
-    model.config.noise_scale = 0.9
+    model.config.cfg_scale = 3.5
+    model.config.noise_scale = 1.0
+    model.net.n_iterations = 4
 
     n_classes = model.config.num_classes
 

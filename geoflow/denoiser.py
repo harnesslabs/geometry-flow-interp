@@ -151,7 +151,7 @@ class Denoiser(nn.Module):
     @torch.no_grad()
     def swap_ema(self, decay: float | None = None):
         params = copy.deepcopy(self.net.state_dict())
-        ep = self.ema.get(decay, next(iter(self.ema.values())))
+        ep = self.ema[decay] if decay is not None else next(iter(self.ema.values()))
         self.net.load_state_dict(ep.state_dict())
         return params
 

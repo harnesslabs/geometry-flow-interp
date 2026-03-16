@@ -1,6 +1,6 @@
 import shlex
 
-import modal
+import modal  # type: ignore[unresolved-import]
 
 app = modal.App("geoflow")
 

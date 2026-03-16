@@ -472,6 +472,9 @@ class JiT(nn.Module):
             patch_size * patch_size * self.out_channels, hidden_size, bias=True
         )
 
+        # RMSNorm for inter-iteration stability
+        self.iter_norm = RMSNorm(hidden_size)
+
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -566,7 +569,7 @@ class JiT(nn.Module):
         outputs = []
 
         for _ in range(n_iters):
-            h = h_prev + self.pred_proj(latent)
+            h = self.iter_norm(h_prev + self.pred_proj(latent))
 
             for i, block in enumerate(self.blocks):
                 if self.in_context_len > 0 and i == self.in_context_start:
