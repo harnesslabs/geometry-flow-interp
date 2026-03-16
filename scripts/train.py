@@ -43,7 +43,7 @@ parser.add_argument("--muon-wd", type=float, default=0.1)
 parser.add_argument("--muon-beta2", type=float, default=0.9)
 parser.add_argument("--muon-momentum", type=float, default=0.95)
 
-parser.add_argument("--warmup", type=float, default=0.05, help="lr warmup")
+parser.add_argument("--warmup", type=float, default=0.01, help="lr warmup")
 parser.add_argument("--adamw", action="store_true", help="only AdamW")
 parser.add_argument("--cosine", action="store_true", help="lr anneal")
 parser.add_argument("--grad-norm", type=float, default=1.0)
