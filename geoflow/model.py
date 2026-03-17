@@ -349,6 +349,32 @@ class FinalLayer(nn.Module):
         return x
 
 
+class AttnResAggregator(nn.Module):
+    """
+    Full Attention Residuals: replaces fixed-weight residual connections with
+    learned softmax attention over all preceding layer outputs.
+    See arXiv 2603.15031.
+    """
+
+    def __init__(self, hidden_size, num_queries):
+        super().__init__()
+        self.queries = nn.ParameterList(
+            [nn.Parameter(torch.empty(hidden_size)) for _ in range(num_queries)]
+        )
+        self.norm = RMSNorm(hidden_size)
+
+    def forward(self, query_idx, layer_outputs):
+        # layer_outputs: list of tensors each (B, S_i, D)
+        # Stack to (L, B, S, D) — all should share the same S at this point
+        stacked = torch.stack(layer_outputs, dim=0)  # (L, B, S, D)
+        keys = self.norm(stacked)  # (L, B, S, D)
+        q = self.queries[query_idx]  # (D,)
+        logits = torch.einsum("lbsd,d->lbs", keys, q)  # (L, B, S)
+        alpha = F.softmax(logits, dim=0)  # softmax over L
+        out = torch.einsum("lbs,lbsd->bsd", alpha, stacked)  # (B, S, D)
+        return out
+
+
 class JiTBlock(nn.Module):
     def __init__(
         self, hidden_size, num_heads, mlp_ratio=4.0, attn_drop=0.0, proj_drop=0.0
@@ -462,6 +488,10 @@ class JiT(nn.Module):
             ]
         )
 
+        # attention residuals
+        self.depth = depth
+        self.attn_res = AttnResAggregator(hidden_size, num_queries=depth + 1)
+
         # linear predict
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
 
@@ -499,6 +529,10 @@ class JiT(nn.Module):
         assert isinstance(t_mlp_0, nn.Linear) and isinstance(t_mlp_2, nn.Linear)
         nn.init.normal_(t_mlp_0.weight, std=0.02)
         nn.init.normal_(t_mlp_2.weight, std=0.02)
+
+        # Initialize AttnRes queries to zero for uniform attention at start:
+        for q in self.attn_res.queries:
+            nn.init.zeros_(q)
 
         # Zero-out adaLN modulation layers:
         for block in self.blocks:
@@ -543,20 +577,43 @@ class JiT(nn.Module):
 
         x = self.x_embedder(x) + self.pos_embed
 
+        # v_0 = initial embeddings
+        layer_outputs = [x]
+
         for i, block in enumerate(self.blocks):
+            # aggregate all previous layer outputs
+            h = self.attn_res(i, layer_outputs)
+
+            # insert in-context tokens at the designated layer
             if self.in_context_len > 0 and i == self.in_context_start:
                 ctx = (
                     y_emb.unsqueeze(1).expand(-1, self.in_context_len, -1)
                     + self.in_context_posemb
                 )
-                x = torch.cat([ctx, x], dim=1)
+                h = torch.cat([ctx, h], dim=1)
+                # zero-pad all prior layer outputs to match new seq length
+                B_cur = layer_outputs[0].shape[0]
+                pad = torch.zeros(
+                    B_cur,
+                    self.in_context_len,
+                    self.hidden_size,
+                    device=x.device,
+                    dtype=x.dtype,
+                )
+                layer_outputs = [torch.cat([pad, v], dim=1) for v in layer_outputs]
+
             rope = (
                 self.feat_rope
                 if i < self.in_context_start
                 else self.feat_rope_incontext
             )
-            x = block(x, c, rope)
+            block_out = block(h, c, rope)
+            # extract delta: v_i = f_i(h_i)
+            v_i = block_out - h
+            layer_outputs.append(v_i)
 
+        # final aggregation over all layer outputs
+        x = self.attn_res(self.depth, layer_outputs)
         x = x[:, self.in_context_len :]
         x = self.final_layer(x, c)
         return self.unpatchify(x, self.patch_size)

@@ -287,7 +287,8 @@ def _load_inception(device):
 def _extract(model, images, device, batch_size=256):
     """Extract 2048-d pool features and 1008-d logits from uint8 images."""
     all_feats, all_logits = [], []
-    for i in range(0, len(images), batch_size):
+    n = len(images)
+    for i in range(0, n, batch_size):
         batch = images[i : i + batch_size].to(device).float()
         if batch.shape[1] == 1:
             batch = batch.expand(-1, 3, -1, -1)
@@ -296,6 +297,9 @@ def _extract(model, images, device, batch_size=256):
         pool, logits = model(batch)
         all_feats.append(pool.cpu())
         all_logits.append(logits.cpu())
+        print(f"  extracting features: {min(i + batch_size, n)}/{n}", end="\r")
+    if n > 0:
+        print()
     return torch.cat(all_feats).numpy(), torch.cat(all_logits)
 
 
@@ -354,7 +358,7 @@ def precompute_stats(loader, device):
     return _compute_stats(np.concatenate(all_feats))
 
 
-def compute_fid_is(samples, stats_path, device, train_loader=None):
+def compute_fid_is(samples, stats_path, device, train_loader=None, batch_size=256):
     """Compute FID and IS for uint8 sample tensor against cached reference stats.
 
     If stats_path doesn't exist and train_loader is provided, computes and caches
@@ -377,17 +381,7 @@ def compute_fid_is(samples, stats_path, device, train_loader=None):
     ref_mu, ref_sigma = ref["mu"], ref["sigma"]
 
     model = _load_inception(device)
-    n = len(samples)
-    all_feats, all_logits = [], []
-    batch_size = 256
-    for i in range(0, n, batch_size):
-        feats_b, logits_b = _extract(model, samples[i : i + batch_size], device)
-        all_feats.append(feats_b)
-        all_logits.append(logits_b)
-        print(f"  extracting features: {min(i + batch_size, n)}/{n}", end="\r")
-    print()
-    feats = np.concatenate(all_feats)
-    logits = torch.cat(all_logits)
+    feats, logits = _extract(model, samples, device, batch_size=batch_size)
     gen_mu, gen_sigma = _compute_stats(feats)
 
     fid = _fid(gen_mu, gen_sigma, ref_mu, ref_sigma)
