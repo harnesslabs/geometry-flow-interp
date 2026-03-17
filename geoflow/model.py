@@ -288,6 +288,7 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
+    @torch.compile(dynamic=False, fullgraph=False)
     def forward(self, x, rope):
         B, N, C = x.shape
         qkv = (
@@ -319,6 +320,7 @@ class SwiGLUFFN(nn.Module):
         self.w3 = nn.Linear(hidden_dim, dim, bias=bias)
         self.ffn_dropout = nn.Dropout(drop)
 
+    @torch.compile(dynamic=False, fullgraph=False)
     def forward(self, x):
         x12 = self.w12(x)
         x1, x2 = x12.chunk(2, dim=-1)
@@ -358,20 +360,17 @@ class AttnResAggregator(nn.Module):
 
     def __init__(self, hidden_size, num_queries):
         super().__init__()
-        self.queries = nn.ParameterList(
-            [nn.Parameter(torch.empty(hidden_size)) for _ in range(num_queries)]
-        )
+        self.queries = nn.Parameter(torch.empty(num_queries, hidden_size))
         self.norm = RMSNorm(hidden_size)
 
-    def forward(self, query_idx, layer_outputs):
-        # layer_outputs: list of tensors each (B, S_i, D)
-        # Stack to (L, B, S, D) — all should share the same S at this point
-        stacked = torch.stack(layer_outputs, dim=0)  # (L, B, S, D)
-        keys = self.norm(stacked)  # (L, B, S, D)
+    # @torch.compile(dynamic=False, fullgraph=False)
+    def forward(self, query_idx, history):
+        # history: (L, B, S, D) pre-allocated buffer slice
+        keys = self.norm(history)  # (L, B, S, D)
         q = self.queries[query_idx]  # (D,)
         logits = torch.einsum("lbsd,d->lbs", keys, q)  # (L, B, S)
         alpha = F.softmax(logits, dim=0)  # softmax over L
-        out = torch.einsum("lbs,lbsd->bsd", alpha, stacked)  # (B, S, D)
+        out = torch.einsum("lbs,lbsd->bsd", alpha, history)  # (B, S, D)
         return out
 
 
@@ -395,19 +394,6 @@ class JiTBlock(nn.Module):
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(), nn.Linear(hidden_size, 6 * hidden_size, bias=True)
         )
-
-    @torch.compile(dynamic=False, fullgraph=False)
-    def forward(self, x, c, feat_rope=None):
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            self.adaLN_modulation(c).chunk(6, dim=-1)
-        )
-        x = x + gate_msa.unsqueeze(1) * self.attn(
-            modulate(self.norm1(x), shift_msa, scale_msa), rope=feat_rope
-        )
-        x = x + gate_mlp.unsqueeze(1) * self.mlp(
-            modulate(self.norm2(x), shift_mlp, scale_mlp)
-        )
-        return x
 
 
 class JiT(nn.Module):
@@ -474,7 +460,8 @@ class JiT(nn.Module):
             dim=half_head_dim, pt_seq_len=hw_seq_len, num_cls_token=self.in_context_len
         )
 
-        # transformer
+        # transformer layers
+        self.depth = depth
         self.blocks = nn.ModuleList(
             [
                 JiTBlock(
@@ -488,9 +475,8 @@ class JiT(nn.Module):
             ]
         )
 
-        # attention residuals
-        self.depth = depth
-        self.attn_res = AttnResAggregator(hidden_size, num_queries=depth + 1)
+        # attention residuals (2 queries per layer + 1 final)
+        self.attn_res = AttnResAggregator(hidden_size, num_queries=2 * depth + 1)
 
         # linear predict
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
@@ -531,8 +517,7 @@ class JiT(nn.Module):
         nn.init.normal_(t_mlp_2.weight, std=0.02)
 
         # Initialize AttnRes queries to zero for uniform attention at start:
-        for q in self.attn_res.queries:
-            nn.init.zeros_(q)
+        nn.init.zeros_(self.attn_res.queries)
 
         # Zero-out adaLN modulation layers:
         for block in self.blocks:
@@ -577,46 +562,49 @@ class JiT(nn.Module):
 
         x = self.x_embedder(x) + self.pos_embed
 
-        # v_0 = initial embeddings
-        layer_outputs = [x]
+        # history as stacked tensor, grown via cat (no in-place mutation)
+        history = x.unsqueeze(0)  # (1, B, S, D)
 
         for i, block in enumerate(self.blocks):
-            # aggregate all previous layer outputs
-            h = self.attn_res(i, layer_outputs)
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+                block.adaLN_modulation(c).chunk(6, dim=-1)
+            )
 
-            # insert in-context tokens at the designated layer
-            if self.in_context_len > 0 and i == self.in_context_start:
+            # --- Attention sub-layer ---
+            x = self.attn_res(2 * i, history)
+
+            # insert in-context tokens at the designated layers
+            if self.in_context_len > 0 and i >= self.in_context_start:
                 ctx = (
                     y_emb.unsqueeze(1).expand(-1, self.in_context_len, -1)
                     + self.in_context_posemb
                 )
-                h = torch.cat([ctx, h], dim=1)
-                # zero-pad all prior layer outputs to match new seq length
-                B_cur = layer_outputs[0].shape[0]
-                pad = torch.zeros(
-                    B_cur,
-                    self.in_context_len,
-                    self.hidden_size,
-                    device=x.device,
-                    dtype=x.dtype,
-                )
-                layer_outputs = [torch.cat([pad, v], dim=1) for v in layer_outputs]
+                x = torch.cat([ctx, x], dim=1)
 
             rope = (
                 self.feat_rope
                 if i < self.in_context_start
                 else self.feat_rope_incontext
             )
-            block_out = block(h, c, rope)
-            # extract delta: v_i = f_i(h_i)
-            v_i = block_out - h
-            layer_outputs.append(v_i)
+            x = gate_msa.unsqueeze(1) * block.attn(
+                modulate(block.norm1(x), shift_msa, scale_msa), rope=rope
+            )
+            if self.in_context_len > 0 and i >= self.in_context_start:
+                x = x[:, self.in_context_len :]
+            history = torch.cat([history, x.unsqueeze(0)], dim=0)
+
+            # --- MLP sub-layer ---
+            x = self.attn_res(2 * i + 1, history)
+            x = gate_mlp.unsqueeze(1) * block.mlp(
+                modulate(block.norm2(x), shift_mlp, scale_mlp)
+            )
+            history = torch.cat([history, x.unsqueeze(0)], dim=0)
 
         # final aggregation over all layer outputs
-        x = self.attn_res(self.depth, layer_outputs)
-        x = x[:, self.in_context_len :]
+        x = self.attn_res(2 * self.depth, history)
         x = self.final_layer(x, c)
-        return self.unpatchify(x, self.patch_size)
+        x = self.unpatchify(x, self.patch_size)
+        return x
 
 
 def JiT_S_7(**kwargs):
