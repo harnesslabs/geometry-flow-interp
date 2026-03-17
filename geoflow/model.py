@@ -342,36 +342,29 @@ class FinalLayer(nn.Module):
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size, bias=True)
         )
+        self.res = AttnResidual(hidden_size)
 
     @torch.compile(dynamic=False, fullgraph=False)
-    def forward(self, x, c):
+    def forward(self, history, c):
+        x = self.res(history)
         shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
         x = modulate(self.norm_final(x), shift, scale)
         x = self.linear(x)
         return x
 
 
-class AttnResAggregator(nn.Module):
-    """
-    Full Attention Residuals: replaces fixed-weight residual connections with
-    learned softmax attention over all preceding layer outputs.
-    See arXiv 2603.15031.
-    """
-
-    def __init__(self, hidden_size, num_queries):
+class AttnResidual(nn.Module):
+    def __init__(self, hidden_size):
         super().__init__()
-        self.queries = nn.Parameter(torch.empty(num_queries, hidden_size))
-        self.norm = RMSNorm(hidden_size)
+        self.proj = nn.Linear(1, hidden_size, bias=False)
+        self.norm = RMSNorm(hidden_size, eps=1e-6)
 
-    # @torch.compile(dynamic=False, fullgraph=False)
-    def forward(self, query_idx, history):
-        # history: (L, B, S, D) pre-allocated buffer slice
-        keys = self.norm(history)  # (L, B, S, D)
-        q = self.queries[query_idx]  # (D,)
-        logits = torch.einsum("lbsd,d->lbs", keys, q)  # (L, B, S)
-        alpha = F.softmax(logits, dim=0)  # softmax over L
-        out = torch.einsum("lbs,lbsd->bsd", alpha, history)  # (B, S, D)
-        return out
+    def forward(self, history):
+        values = torch.stack(history, dim=0)
+        keys = self.norm(values)
+        logits = torch.einsum("d, n b t d -> n b t", self.proj.weight.squeeze(), keys)
+        h = torch.einsum("n b t, n b t d -> b t d", logits.softmax(0), values)
+        return h
 
 
 class JiTBlock(nn.Module):
@@ -394,6 +387,30 @@ class JiTBlock(nn.Module):
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(), nn.Linear(hidden_size, 6 * hidden_size, bias=True)
         )
+        self.attn_res = AttnResidual(hidden_size)
+        self.mlp_res = AttnResidual(hidden_size)
+
+    # @torch.compile(dynamic=True, fullgraph=False)
+    def forward(self, history, c, feat_rope=None, ctx=None):
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+            self.adaLN_modulation(c).chunk(6, dim=-1)
+        )
+
+        x = self.attn_res(history)
+        if ctx is not None:
+            x = torch.cat([ctx, x], dim=1)
+        x = gate_msa.unsqueeze(1) * self.attn(
+            modulate(self.norm1(x), shift_msa, scale_msa), rope=feat_rope
+        )
+        if ctx is not None:
+            x = x[:, ctx.shape[1] :]
+        history.append(x)
+
+        x = self.mlp_res(history)
+        x = gate_mlp.unsqueeze(1) * self.mlp(
+            modulate(self.norm2(x), shift_mlp, scale_mlp)
+        )
+        history.append(x)
 
 
 class JiT(nn.Module):
@@ -475,9 +492,6 @@ class JiT(nn.Module):
             ]
         )
 
-        # attention residuals (2 queries per layer + 1 final)
-        self.attn_res = AttnResAggregator(hidden_size, num_queries=2 * depth + 1)
-
         # linear predict
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
 
@@ -516,12 +530,11 @@ class JiT(nn.Module):
         nn.init.normal_(t_mlp_0.weight, std=0.02)
         nn.init.normal_(t_mlp_2.weight, std=0.02)
 
-        # Initialize AttnRes queries to zero for uniform attention at start:
-        nn.init.zeros_(self.attn_res.queries)
-
-        # Zero-out adaLN modulation layers:
+        # Zero-out adaLN modulation layers and residual attention:
         for block in self.blocks:
             assert isinstance(block, JiTBlock)
+            nn.init.constant_(block.attn_res.proj.weight, 0)
+            nn.init.constant_(block.mlp_res.proj.weight, 0)
             ada_ln = block.adaLN_modulation[-1]
             assert isinstance(ada_ln, nn.Linear)
             nn.init.constant_(ada_ln.weight, 0)
@@ -533,6 +546,7 @@ class JiT(nn.Module):
         nn.init.constant_(final_ada_ln.weight, 0)
         nn.init.constant_(final_ada_ln.bias, 0)
 
+        nn.init.constant_(self.final_layer.res.proj.weight, 0)
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
@@ -561,48 +575,24 @@ class JiT(nn.Module):
         c = t_emb + y_emb
 
         x = self.x_embedder(x) + self.pos_embed
+        history = [x]
 
-        # history as stacked tensor, grown via cat (no in-place mutation)
-        history = x.unsqueeze(0)  # (1, B, S, D)
-
+        ctx = None
         for i, block in enumerate(self.blocks):
-            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-                block.adaLN_modulation(c).chunk(6, dim=-1)
-            )
-
-            # --- Attention sub-layer ---
-            x = self.attn_res(2 * i, history)
-
-            # insert in-context tokens at the designated layers
-            if self.in_context_len > 0 and i >= self.in_context_start:
+            if self.in_context_len > 0 and i == self.in_context_start:
                 ctx = (
                     y_emb.unsqueeze(1).expand(-1, self.in_context_len, -1)
                     + self.in_context_posemb
                 )
-                x = torch.cat([ctx, x], dim=1)
 
             rope = (
                 self.feat_rope
                 if i < self.in_context_start
                 else self.feat_rope_incontext
             )
-            x = gate_msa.unsqueeze(1) * block.attn(
-                modulate(block.norm1(x), shift_msa, scale_msa), rope=rope
-            )
-            if self.in_context_len > 0 and i >= self.in_context_start:
-                x = x[:, self.in_context_len :]
-            history = torch.cat([history, x.unsqueeze(0)], dim=0)
+            block(history, c, rope, ctx=ctx)
 
-            # --- MLP sub-layer ---
-            x = self.attn_res(2 * i + 1, history)
-            x = gate_mlp.unsqueeze(1) * block.mlp(
-                modulate(block.norm2(x), shift_mlp, scale_mlp)
-            )
-            history = torch.cat([history, x.unsqueeze(0)], dim=0)
-
-        # final aggregation over all layer outputs
-        x = self.attn_res(2 * self.depth, history)
-        x = self.final_layer(x, c)
+        x = self.final_layer(history, c)
         x = self.unpatchify(x, self.patch_size)
         return x
 
@@ -656,7 +646,7 @@ def JiT_B_8(**kwargs):
         num_heads=8,
         mlp_ratio=2.0,
         bottleneck_dim=128,
-        in_context_len=4,
+        in_context_len=0,
         in_context_start=4,
         patch_size=8,
         **kwargs,
