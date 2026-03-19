@@ -155,21 +155,20 @@ class VisionRotaryEmbeddingFast(nn.Module):
         return t * self.freqs_cos + self._rotate_half(t) * self.freqs_sin
 
 
-class RMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        """
-        LlamaRMSNorm is equivalent to T5LayerNorm
-        """
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
+class CastedLinear(nn.Linear):
+    # Keep weights in fp32 for optimizer/state quality, cast at matmul time for bf16 compute.
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        bias = self.bias.to(input.dtype) if self.bias is not None else None
+        return F.linear(input, self.weight.to(input.dtype), bias)
 
-    def forward(self, hidden_states):
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        return (self.weight * hidden_states).to(input_dtype)
+
+class RMSNorm(nn.Module):
+    def __init__(self, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.rms_norm(x, (x.size(-1),), eps=self.eps)
 
 
 class BottleneckPatchEmbed(nn.Module):
@@ -214,9 +213,9 @@ class TimestepEmbedder(nn.Module):
     def __init__(self, hidden_size, frequency_embedding_size=256):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(frequency_embedding_size, hidden_size, bias=True),
+            CastedLinear(frequency_embedding_size, hidden_size, bias=True),
             nn.SiLU(),
-            nn.Linear(hidden_size, hidden_size, bias=True),
+            CastedLinear(hidden_size, hidden_size, bias=True),
         )
         self.frequency_embedding_size = frequency_embedding_size
 
@@ -271,40 +270,53 @@ class Attention(nn.Module):
         self,
         dim,
         num_heads=8,
-        qkv_bias=True,
-        qk_norm=True,
+        qkv_bias=False,
         attn_drop=0.0,
         proj_drop=0.0,
     ):
         super().__init__()
         self.num_heads = num_heads
-        head_dim = dim // num_heads
+        self.num_kv_heads = num_heads // 2
+        self.head_dim = dim // num_heads
+        kv_dim = self.num_kv_heads * self.head_dim
 
-        self.q_norm = RMSNorm(head_dim) if qk_norm else nn.Identity()
-        self.k_norm = RMSNorm(head_dim) if qk_norm else nn.Identity()
+        self.q_proj = CastedLinear(dim, dim, bias=qkv_bias)
+        self.k_proj = CastedLinear(dim, kv_dim, bias=qkv_bias)
+        self.v_proj = CastedLinear(dim, kv_dim, bias=qkv_bias)
+        self.proj = CastedLinear(dim, dim, bias=False)
+        self.q_gain = nn.Parameter(torch.full((num_heads,), 1.5, dtype=torch.float32))
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x, rope):
         B, N, C = x.shape
-        qkv = (
-            self.qkv(x)
-            .reshape(B, N, 3, self.num_heads, C // self.num_heads)
-            .permute(2, 0, 3, 1, 4)
-        )
-        q, k, v = (qkv[0], qkv[1], qkv[2])
 
-        q, k = self.q_norm(q), self.k_norm(k)
+        q = self.q_proj(x).reshape(B, N, self.num_heads, self.head_dim).transpose(1, 2)
+        k = (
+            self.k_proj(x)
+            .reshape(B, N, self.num_kv_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        v = (
+            self.v_proj(x)
+            .reshape(B, N, self.num_kv_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+
+        q, k = F.rms_norm(q, (q.size(-1),)), F.rms_norm(k, (k.size(-1),))
         q, k = rope(q), rope(k)
+        q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
 
         x = F.scaled_dot_product_attention(
-            q, k, v, dropout_p=self.attn_drop.p if self.training else 0.0
+            q,
+            k,
+            v,
+            dropout_p=self.attn_drop.p if self.training else 0.0,
+            enable_gqa=True,
         )
 
-        x = x.transpose(1, 2).reshape(B, N, C)
+        x = x.transpose(1, 2).contiguous().reshape(B, N, C)
 
         x = self.proj(x)
         x = self.proj_drop(x)
@@ -312,11 +324,11 @@ class Attention(nn.Module):
 
 
 class SwiGLUFFN(nn.Module):
-    def __init__(self, dim: int, hidden_dim: int, drop=0.0, bias=True) -> None:
+    def __init__(self, dim: int, hidden_dim: int, drop=0.0) -> None:
         super().__init__()
         hidden_dim = int(hidden_dim * 2 / 3)
-        self.w12 = nn.Linear(dim, 2 * hidden_dim, bias=bias)
-        self.w3 = nn.Linear(hidden_dim, dim, bias=bias)
+        self.w12 = CastedLinear(dim, 2 * hidden_dim, bias=False)
+        self.w3 = CastedLinear(hidden_dim, dim, bias=False)
         self.ffn_dropout = nn.Dropout(drop)
 
     def forward(self, x):
@@ -326,20 +338,6 @@ class SwiGLUFFN(nn.Module):
         return self.w3(self.ffn_dropout(hidden))
 
 
-class AttnResidual(nn.Module):
-    def __init__(self, hidden_size):
-        super().__init__()
-        self.proj = nn.Parameter(torch.zeros(hidden_size))
-        self.norm = RMSNorm(hidden_size, eps=1e-6)
-
-    def forward(self, history):
-        values = torch.stack(history, dim=0)
-        keys = self.norm(values)
-        logits = torch.einsum("d, n b t d -> n b t", self.proj, keys)
-        h = torch.einsum("n b t, n b t d -> b t d", logits.softmax(0), values)
-        return h
-
-
 class FinalLayer(nn.Module):
     """
     The final layer of JiT.
@@ -347,19 +345,17 @@ class FinalLayer(nn.Module):
 
     def __init__(self, hidden_size, patch_size, out_channels):
         super().__init__()
-        self.norm_final = RMSNorm(hidden_size)
-        self.linear = nn.Linear(
+        self.norm_final = RMSNorm()
+        self.linear = CastedLinear(
             hidden_size, patch_size * patch_size * out_channels, bias=True
         )
         self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size, bias=True)
+            nn.SiLU(), CastedLinear(hidden_size, 2 * hidden_size, bias=True)
         )
-        self.res = AttnResidual(hidden_size)
 
     @torch.compile(dynamic=False, fullgraph=False)
-    def forward(self, history, c):
+    def forward(self, x, c):
         shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
-        x = self.res(history)
         x = modulate(self.norm_final(x), shift, scale)
         x = self.linear(x)
         return x
@@ -370,47 +366,38 @@ class JiTBlock(nn.Module):
         self, hidden_size, num_heads, mlp_ratio=4.0, attn_drop=0.0, proj_drop=0.0
     ):
         super().__init__()
-        self.norm1 = RMSNorm(hidden_size, eps=1e-6)
+        self.norm1 = RMSNorm(eps=1e-6)
         self.attn = Attention(
             hidden_size,
             num_heads=num_heads,
-            qkv_bias=True,
-            qk_norm=True,
+            qkv_bias=False,
             attn_drop=attn_drop,
             proj_drop=proj_drop,
         )
-        self.norm2 = RMSNorm(hidden_size, eps=1e-6)
+        self.norm2 = RMSNorm(eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         self.mlp = SwiGLUFFN(hidden_size, mlp_hidden_dim, drop=proj_drop)
         self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(), nn.Linear(hidden_size, 6 * hidden_size, bias=True)
+            nn.SiLU(), CastedLinear(hidden_size, 6 * hidden_size, bias=True)
         )
-        self.attn_res = AttnResidual(hidden_size)
-        self.mlp_res = AttnResidual(hidden_size)
+        self.resid_mix = nn.Parameter(
+            torch.stack((torch.ones(hidden_size), torch.zeros(hidden_size))).float()
+        )
 
-    @torch.compile()
-    def forward(self, history, c, feat_rope, ctx):
+    @torch.compile(dynamic=False, fullgraph=False)
+    def forward(self, x, c, emb, feat_rope=None):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
             self.adaLN_modulation(c).chunk(6, dim=-1)
         )
-
-        # attention
-        x = self.attn_res(history)
-        if ctx.shape[1] > 0:
-            x = torch.cat([ctx, x], dim=1)
-        x = gate_msa.unsqueeze(1) * self.attn(
+        mix = self.resid_mix.to(dtype=x.dtype)
+        x = mix[0][None, None, :] * x + mix[1][None, None, :] * emb
+        x = x + gate_msa.unsqueeze(1) * self.attn(
             modulate(self.norm1(x), shift_msa, scale_msa), rope=feat_rope
         )
-        if ctx.shape[1] > 0:
-            x = x[:, ctx.shape[1] :]
-        history.append(x)
-
-        # mlp
-        x = self.mlp_res(history)
-        x = gate_mlp.unsqueeze(1) * self.mlp(
+        x = x + gate_mlp.unsqueeze(1) * self.mlp(
             modulate(self.norm2(x), shift_mlp, scale_mlp)
         )
-        history.append(x)
+        return x
 
 
 class JiT(nn.Module):
@@ -477,8 +464,7 @@ class JiT(nn.Module):
             dim=half_head_dim, pt_seq_len=hw_seq_len, num_cls_token=self.in_context_len
         )
 
-        # transformer layers
-        self.depth = depth
+        # transformer
         self.blocks = nn.ModuleList(
             [
                 JiTBlock(
@@ -530,7 +516,7 @@ class JiT(nn.Module):
         nn.init.normal_(t_mlp_0.weight, std=0.02)
         nn.init.normal_(t_mlp_2.weight, std=0.02)
 
-        # Zero-out adaLN modulation layers and residual attention:
+        # Zero-out adaLN modulation layers:
         for block in self.blocks:
             assert isinstance(block, JiTBlock)
             ada_ln = block.adaLN_modulation[-1]
@@ -571,27 +557,26 @@ class JiT(nn.Module):
         y_emb = self.y_embedder(y)
         c = t_emb + y_emb
 
-        x = self.x_embedder(x) + self.pos_embed
-        history = [x]
+        x = emb = self.x_embedder(x) + self.pos_embed
 
-        ctx = x.new_zeros(x.shape[0], 0, self.hidden_size)
         for i, block in enumerate(self.blocks):
             if self.in_context_len > 0 and i == self.in_context_start:
                 ctx = (
                     y_emb.unsqueeze(1).expand(-1, self.in_context_len, -1)
                     + self.in_context_posemb
                 )
-
+                x = torch.cat([ctx, x], dim=1)
+                emb = F.pad(emb, (0, 0, self.in_context_len, 0))
             rope = (
                 self.feat_rope
                 if i < self.in_context_start
                 else self.feat_rope_incontext
             )
-            block(history, c, rope, ctx)
+            x = block(x, c, emb, rope)
 
-        x = self.final_layer(history, c)
-        x = self.unpatchify(x, self.patch_size)
-        return x
+        x = x[:, self.in_context_len :]
+        x = self.final_layer(x, c)
+        return self.unpatchify(x, self.patch_size)
 
 
 def JiT_S_7(**kwargs):
