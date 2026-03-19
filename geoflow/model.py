@@ -353,7 +353,7 @@ class FinalLayer(nn.Module):
             nn.SiLU(), CastedLinear(hidden_size, 2 * hidden_size, bias=True)
         )
 
-    @torch.compile(dynamic=False, fullgraph=False)
+    @torch.compile
     def forward(self, x, c):
         shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
         x = modulate(self.norm_final(x), shift, scale)
@@ -384,7 +384,7 @@ class JiTBlock(nn.Module):
             torch.stack((torch.ones(hidden_size), torch.zeros(hidden_size))).float()
         )
 
-    @torch.compile(dynamic=False, fullgraph=False)
+    @torch.compile
     def forward(self, x, c, emb, feat_rope=None):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
             self.adaLN_modulation(c).chunk(6, dim=-1)
@@ -621,16 +621,16 @@ def JiT_M_7(**kwargs):
     )
 
 
-def JiT_B_8(**kwargs):
+def JiT_B_4(**kwargs):
     return JiT(
         depth=8,
         hidden_size=512,
         num_heads=8,
-        mlp_ratio=2.0,
+        mlp_ratio=4.0,
         bottleneck_dim=128,
         in_context_len=4,
         in_context_start=4,
-        patch_size=8,
+        patch_size=4,
         **kwargs,
     )
 
@@ -639,5 +639,5 @@ models = {
     "JiT-S/7": JiT_S_7,
     "JiT-S/8": JiT_S_8,
     "JiT-M/7": JiT_M_7,
-    "JiT-B/8": JiT_B_8,
+    "JiT-B/4": JiT_B_4,
 }

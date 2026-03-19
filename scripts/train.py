@@ -6,7 +6,6 @@ import warnings
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torchinfo import summary
@@ -27,9 +26,9 @@ warnings.filterwarnings(
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("--model", type=str, default="JiT-B/8", choices=models.keys())
+parser.add_argument("--model", type=str, default="JiT-B/4", choices=models.keys())
 parser.add_argument("--bs", "--batch-size", type=int, default=256)
-parser.add_argument("--epochs", type=int, default=100)
+parser.add_argument("--epochs", type=int, default=500)
 
 # optimizer
 parser.add_argument("--lr", "--learning-rate", type=float, default=3e-4)
@@ -38,11 +37,11 @@ parser.add_argument("--betas", type=float, nargs=2, default=(0.9, 0.95))
 parser.add_argument("--eps", type=float, default=1e-10)
 
 parser.add_argument("--muon-lr", type=float, default=0.01)
-parser.add_argument("--muon-wd", type=float, default=0.1)
+parser.add_argument("--muon-wd", type=float, default=0.05)
 parser.add_argument("--muon-beta2", type=float, default=0.9)
 parser.add_argument("--muon-momentum", type=float, default=0.95)
 
-parser.add_argument("--warmup", type=float, default=0.05, help="lr warmup")
+parser.add_argument("--warmup", type=float, default=0.01, help="lr warmup")
 parser.add_argument("--adamw", action="store_true", help="only AdamW")
 parser.add_argument("--cosine", action="store_true", help="lr anneal")
 parser.add_argument("--grad-norm", type=float, default=1.0)
@@ -76,40 +75,6 @@ def _generate_samples(model, device, num_samples, num_classes=10, batch_size=256
         )
     print()
     return torch.cat(all_samples, dim=0)
-
-
-def _train_eval_classifier(train_loader, val_loader, device):
-    ds, t0 = train_loader.dataset, time.time()
-    clf = nn.Sequential(
-        nn.Flatten(),
-        nn.Linear(np.prod(ds.shape), 1024), nn.BatchNorm1d(1024), nn.ReLU(),
-        nn.Linear(1024, 512), nn.BatchNorm1d(512), nn.ReLU(),
-        nn.Linear(512, 256), nn.BatchNorm1d(256), nn.ReLU(),
-        nn.Linear(256, ds.n_classes),
-    ).to(device)  # fmt: skip
-    with torch.random.fork_rng(devices=[0], device_type=device):
-        torch.manual_seed(0)
-        opt, epochs = torch.optim.AdamW(clf.parameters(), lr=1e-3), 2
-        sched = torch.optim.lr_scheduler.OneCycleLR(
-            opt, max_lr=8e-2, steps_per_epoch=len(train_loader), epochs=epochs
-        )
-        for _ in range(epochs):
-            for x, y in train_loader:
-                opt.zero_grad(set_to_none=True)
-                loss = F.cross_entropy(clf(x.to(device)), y.to(device))
-                loss.backward()
-                opt.step()
-                sched.step()
-    clf.eval().requires_grad_(False)
-    correct = sum(
-        (clf(x.to(device)).argmax(1) == y.to(device)).sum().item()
-        for x, y in val_loader
-    )
-    print(
-        f"  eval classifier — val acc={correct / len(val_loader.dataset):.4f} "
-        f"({time.time() - t0:.1f}s)"
-    )
-    return clf
 
 
 def _setup_optimizer(model, args):
@@ -204,8 +169,6 @@ def train(args):
     ckpt = CheckpointManager(args, model, optimizer, scheduler, device)
     start_epoch, global_step = ckpt.load_if_available()
 
-    classifier = _train_eval_classifier(train_loader, val_loader, device)
-
     for epoch in range(start_epoch, args.epochs):
         # training
         model.train()
@@ -226,7 +189,7 @@ def train(args):
             ).item()
             if not args.adamw:  # warmup muon momentum & decay weight decay
                 frac = min(global_step / warmup_steps, 1) if warmup_steps > 0 else 1
-                muon_momentum = max(args.muon_momentum - 0.10, 0.0) + frac * 0.10
+                muon_momentum = max(args.muon_momentum - 0.1, 0.0) + frac * 0.1
                 muon_wd = args.muon_wd * (1 - global_step / total_steps)
                 for g in optimizer.param_groups:
                     if g["kind"] == "muon":
@@ -271,7 +234,7 @@ def train(args):
         model.eval()
         params = model.swap_ema()
 
-        with torch.no_grad():
+        with torch.inference_mode():
             # val/loss
             losses: list[float] = []
             for x, y in val_loader:
@@ -290,27 +253,30 @@ def train(args):
             )
             with utils.maybe_autocast(device):
                 samples = model.generate(labels)
-            preds = classifier(samples).argmax(dim=1)
-            acc = (preds == labels).float().mean().item()
 
             # val/samples
-            grid = ((samples + 1) / 2).clamp(0, 1)  # [-1,1] → [0,1]
-            rows = [
+            samples = ((samples + 1) / 2).clamp(0, 1)  # [-1,1] → [0,1]
+            samples = [
                 torch.cat(
-                    [grid[i * num_per_class + j] for j in range(num_per_class)], dim=2
+                    [samples[i * num_per_class + j] for j in range(num_per_class)],
+                    dim=2,
                 )
                 for i in range(ds.n_classes)
             ]
-            grid_img = torch.cat(rows, dim=1)  # (C, H*10, W*10)
-            grid_img = F.interpolate(
-                grid_img.unsqueeze(0), scale_factor=4, mode="nearest"
-            ).squeeze(0)
+            samples = torch.cat(samples, dim=1)  # (C, H*10, W*10)
+            samples = (
+                F.interpolate(samples.unsqueeze(0), scale_factor=4, mode="nearest")
+                .squeeze(0)
+                .cpu()
+                .float()
+            )
 
-        # val/fid & val/is
-
-        stats_path = os.path.join("fid_stats", f"{args.dataset}_train.npz")
-        fid_samples = _generate_samples(model, device, args.fid_samples, ds.n_classes)
-        fid_is = compute_fid_is(fid_samples, stats_path, device, train_loader)
+            # val/fid & val/is
+            stats_path = os.path.join("fid_stats", f"{args.dataset}_train.npz")
+            fid_samples = _generate_samples(
+                model, device, args.fid_samples, ds.n_classes
+            )
+            fid_is = compute_fid_is(fid_samples, stats_path, device, train_loader)
 
         model.swap_params(params)
 
@@ -318,15 +284,14 @@ def train(args):
 
         val_metrics = {
             "val/loss": avg_val_loss,
-            "val/acc": acc,
-            "val/samples": wandb.Image(grid_img.cpu().float()),
+            "val/samples": wandb.Image(samples),
             **fid_is,
         }
         wandb.log(val_metrics, step=global_step)
 
         print(
-            f"val/loss={avg_val_loss:.4f} val/acc={acc:.4f} "
-            f"val/fid={fid_is['val/fid']:.2f} val/is={fid_is['val/is_mean']:.2f}±{fid_is['val/is_std']:.2f}"
+            f"val/loss={avg_val_loss:.4f} val/fid={fid_is['val/fid']:.2f} "
+            f"val/is={fid_is['val/is_mean']:.2f}±{fid_is['val/is_std']:.2f}"
         )
 
         ckpt.save(epoch + 1, global_step, tag="last")

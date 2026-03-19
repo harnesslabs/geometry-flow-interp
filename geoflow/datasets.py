@@ -89,6 +89,7 @@ def setup_dataloaders(batch_size, dataset="mnist"):
         shuffle=False,
         num_workers=2,
         prefetch_factor=2,
+        drop_last=True,
         persistent_workers=True,
         pin_memory=True,
     )
