@@ -271,7 +271,7 @@ def train(args):
         model.eval()
         params = model.swap_ema()
 
-        with torch.inference_mode():
+        with torch.no_grad():
             # val/loss
             losses: list[float] = []
             for x, y in val_loader:

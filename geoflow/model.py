@@ -288,7 +288,6 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    @torch.compile(dynamic=False, fullgraph=False)
     def forward(self, x, rope):
         B, N, C = x.shape
         qkv = (
@@ -320,12 +319,25 @@ class SwiGLUFFN(nn.Module):
         self.w3 = nn.Linear(hidden_dim, dim, bias=bias)
         self.ffn_dropout = nn.Dropout(drop)
 
-    @torch.compile(dynamic=False, fullgraph=False)
     def forward(self, x):
         x12 = self.w12(x)
         x1, x2 = x12.chunk(2, dim=-1)
         hidden = F.silu(x1) * x2
         return self.w3(self.ffn_dropout(hidden))
+
+
+class AttnResidual(nn.Module):
+    def __init__(self, hidden_size):
+        super().__init__()
+        self.proj = nn.Parameter(torch.zeros(hidden_size))
+        self.norm = RMSNorm(hidden_size, eps=1e-6)
+
+    def forward(self, history):
+        values = torch.stack(history, dim=0)
+        keys = self.norm(values)
+        logits = torch.einsum("d, n b t d -> n b t", self.proj, keys)
+        h = torch.einsum("n b t, n b t d -> b t d", logits.softmax(0), values)
+        return h
 
 
 class FinalLayer(nn.Module):
@@ -346,25 +358,11 @@ class FinalLayer(nn.Module):
 
     @torch.compile(dynamic=False, fullgraph=False)
     def forward(self, history, c):
-        x = self.res(history)
         shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
+        x = self.res(history)
         x = modulate(self.norm_final(x), shift, scale)
         x = self.linear(x)
         return x
-
-
-class AttnResidual(nn.Module):
-    def __init__(self, hidden_size):
-        super().__init__()
-        self.proj = nn.Linear(1, hidden_size, bias=False)
-        self.norm = RMSNorm(hidden_size, eps=1e-6)
-
-    def forward(self, history):
-        values = torch.stack(history, dim=0)
-        keys = self.norm(values)
-        logits = torch.einsum("d, n b t d -> n b t", self.proj.weight.squeeze(), keys)
-        h = torch.einsum("n b t, n b t d -> b t d", logits.softmax(0), values)
-        return h
 
 
 class JiTBlock(nn.Module):
@@ -390,22 +388,24 @@ class JiTBlock(nn.Module):
         self.attn_res = AttnResidual(hidden_size)
         self.mlp_res = AttnResidual(hidden_size)
 
-    # @torch.compile(dynamic=True, fullgraph=False)
-    def forward(self, history, c, feat_rope=None, ctx=None):
+    @torch.compile()
+    def forward(self, history, c, feat_rope, ctx):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
             self.adaLN_modulation(c).chunk(6, dim=-1)
         )
 
+        # attention
         x = self.attn_res(history)
-        if ctx is not None:
+        if ctx.shape[1] > 0:
             x = torch.cat([ctx, x], dim=1)
         x = gate_msa.unsqueeze(1) * self.attn(
             modulate(self.norm1(x), shift_msa, scale_msa), rope=feat_rope
         )
-        if ctx is not None:
+        if ctx.shape[1] > 0:
             x = x[:, ctx.shape[1] :]
         history.append(x)
 
+        # mlp
         x = self.mlp_res(history)
         x = gate_mlp.unsqueeze(1) * self.mlp(
             modulate(self.norm2(x), shift_mlp, scale_mlp)
@@ -533,8 +533,6 @@ class JiT(nn.Module):
         # Zero-out adaLN modulation layers and residual attention:
         for block in self.blocks:
             assert isinstance(block, JiTBlock)
-            nn.init.constant_(block.attn_res.proj.weight, 0)
-            nn.init.constant_(block.mlp_res.proj.weight, 0)
             ada_ln = block.adaLN_modulation[-1]
             assert isinstance(ada_ln, nn.Linear)
             nn.init.constant_(ada_ln.weight, 0)
@@ -546,7 +544,6 @@ class JiT(nn.Module):
         nn.init.constant_(final_ada_ln.weight, 0)
         nn.init.constant_(final_ada_ln.bias, 0)
 
-        nn.init.constant_(self.final_layer.res.proj.weight, 0)
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
@@ -577,7 +574,7 @@ class JiT(nn.Module):
         x = self.x_embedder(x) + self.pos_embed
         history = [x]
 
-        ctx = None
+        ctx = x.new_zeros(x.shape[0], 0, self.hidden_size)
         for i, block in enumerate(self.blocks):
             if self.in_context_len > 0 and i == self.in_context_start:
                 ctx = (
@@ -590,7 +587,7 @@ class JiT(nn.Module):
                 if i < self.in_context_start
                 else self.feat_rope_incontext
             )
-            block(history, c, rope, ctx=ctx)
+            block(history, c, rope, ctx)
 
         x = self.final_layer(history, c)
         x = self.unpatchify(x, self.patch_size)
@@ -646,7 +643,7 @@ def JiT_B_8(**kwargs):
         num_heads=8,
         mlp_ratio=2.0,
         bottleneck_dim=128,
-        in_context_len=0,
+        in_context_len=4,
         in_context_start=4,
         patch_size=8,
         **kwargs,
