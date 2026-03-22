@@ -163,7 +163,7 @@ class CastedLinear(nn.Linear):
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, eps=1e-6):
+    def __init__(self, eps: float | None = None):
         super().__init__()
         self.eps = eps
 
@@ -452,7 +452,7 @@ class JiT(nn.Module):
             self.in_context_posemb = nn.Parameter(
                 torch.zeros(1, self.in_context_len, hidden_size), requires_grad=True
             )
-            torch.nn.init.normal_(self.in_context_posemb, std=0.02)
+            nn.init.normal_(self.in_context_posemb, std=0.02)
 
         # rope
         half_head_dim = hidden_size // num_heads // 2
@@ -487,7 +487,7 @@ class JiT(nn.Module):
         # Initialize transformer layers:
         def _basic_init(module):
             if isinstance(module, nn.Linear):
-                torch.nn.init.orthogonal_(module.weight)
+                nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
 
