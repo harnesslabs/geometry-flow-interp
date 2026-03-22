@@ -216,7 +216,6 @@ def train(args):
                 "kimg": global_kimg,
                 "epoch": epoch,
             }
-            # test
             if not args.adamw:
                 metrics["train/muon_lr"] = optimizer.param_groups[1]["lr"]
             wandb.log(metrics, step=global_step)
