@@ -16,8 +16,8 @@ class DenoiserConfig:
     num_classes: int
     #
     cond_drop_prob: float = 0.1
-    P_mean: float = -0.8
-    P_std: float = 0.8
+    P_mean: float = 1.2
+    P_std: float = 1.2
     t_eps: float = 5e-2
     noise_scale: float = 1.0
     #

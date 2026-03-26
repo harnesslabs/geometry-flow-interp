@@ -1,5 +1,6 @@
 import argparse
 import dataclasses
+import math
 import os
 import time
 import warnings
@@ -190,7 +191,12 @@ def train(args):
             if not args.adamw:  # warmup muon momentum & decay weight decay
                 frac = min(global_step / warmup_steps, 1) if warmup_steps > 0 else 1
                 muon_momentum = max(args.muon_momentum - 0.1, 0.0) + frac * 0.1
-                muon_wd = args.muon_wd * (1 - global_step / total_steps)
+                # muon_wd = args.muon_wd * (1 - global_step / total_steps) # linear decay
+                muon_wd = (  # cosine decay
+                    args.muon_wd
+                    * 0.5
+                    * (1 + math.cos(math.pi * global_step / total_steps))
+                )
                 for g in optimizer.param_groups:
                     if g["kind"] == "muon":
                         g["momentum"] = muon_momentum
