@@ -16,8 +16,6 @@ class DenoiserConfig:
     num_classes: int
     #
     cond_drop_prob: float = 0.1
-    P_mean: float = 1.2
-    P_std: float = 1.2
     t_eps: float = 5e-2
     noise_scale: float = 1.0
     #
@@ -48,11 +46,11 @@ class Denoiser(nn.Module):
         return torch.where(drop, self.config.num_classes, x)
 
     def sample_t(self, n: int, device=None):
-        z = torch.randn(n, device=device) * self.config.P_std + self.config.P_mean
-        return torch.sigmoid(z)
+        return torch.rand(n, device=device)
 
     def _to_velocity(self, x, z, t):
-        return (x - z) / (1 - t).clamp_min(self.config.t_eps)
+        eps = self.config.t_eps if self.training else 1e-5
+        return (x - z) / (1 - t).clamp_min(eps)
 
     def forward(self, x, cond):
         cond_dropped = self.drop_cond(cond) if self.training else cond

@@ -37,12 +37,12 @@ parser.add_argument("--wd", "--weight-decay", type=float, default=0.0)
 parser.add_argument("--betas", type=float, nargs=2, default=(0.9, 0.95))
 parser.add_argument("--eps", type=float, default=1e-10)
 
-parser.add_argument("--muon-lr", type=float, default=0.01)
+parser.add_argument("--muon-lr", type=float, default=0.005)
 parser.add_argument("--muon-wd", type=float, default=0.05)
 parser.add_argument("--muon-beta2", type=float, default=0.9)
 parser.add_argument("--muon-momentum", type=float, default=0.95)
 
-parser.add_argument("--warmup", type=float, default=0.01, help="lr warmup")
+parser.add_argument("--warmup", type=int, default=1000, help="lr warmup steps")
 parser.add_argument("--adamw", action="store_true", help="only AdamW")
 parser.add_argument("--cosine", action="store_true", help="lr anneal")
 parser.add_argument("--grad-norm", type=float, default=1.0)
@@ -156,8 +156,8 @@ def train(args):
 
     optimizer = _setup_optimizer(model, args)
 
+    warmup_steps = args.warmup
     total_steps = len(train_loader) * args.epochs
-    warmup_steps = int(total_steps * args.warmup)
     scheduler = LinearLR(optimizer, start_factor=1e-6, total_iters=warmup_steps)
     if args.cosine:
         cosine = CosineAnnealingLR(
