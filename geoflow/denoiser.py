@@ -67,15 +67,14 @@ class Denoiser(nn.Module):
         return loss
 
     @torch.no_grad()
-    def generate(self, cond):
+    def generate(self, cond, T: int | None = None):
+        T = self.config.num_sampling_steps if T is None else T
         B = cond.size(0)
         C = self.net.in_channels
         H = W = self.net.input_size
         z = self.config.noise_scale * torch.randn(B, C, H, W, device=cond.device)
         timesteps = (
-            torch.linspace(
-                0.0, 1.0, self.config.num_sampling_steps + 1, device=cond.device
-            )
+            torch.linspace(0.0, 1.0, T + 1, device=cond.device)
             .view(-1, *([1] * z.ndim))
             .expand(-1, B, *[-1] * (z.ndim - 1))
         )
@@ -87,7 +86,7 @@ class Denoiser(nn.Module):
         else:
             raise NotImplementedError
 
-        for i in range(self.config.num_sampling_steps - 1):
+        for i in range(T - 1):
             t, s = timesteps[i], timesteps[i + 1]
             z = stepper(z, t, s, cond)
         z = self._euler_step(z, timesteps[-2], timesteps[-1], cond)

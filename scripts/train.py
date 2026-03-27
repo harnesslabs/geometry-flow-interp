@@ -51,7 +51,7 @@ parser.add_argument(
 parser.add_argument("--warmup", type=int, default=1000, help="lr warmup steps")
 parser.add_argument("--adamw", action="store_true", help="only AdamW")
 parser.add_argument("--cosine", action="store_true", help="lr anneal")
-parser.add_argument("--grad-norm", type=float, default=1.0)
+parser.add_argument("--grad-norm", type=float, default=3.0)
 
 # experiment
 parser.add_argument(
@@ -65,7 +65,9 @@ parser.add_argument("--offline", action="store_true", help="disable wandb")
 parser.add_argument("--fid-samples", type=int, default=10000, help="samples for FID/IS")
 
 
-def _generate_samples(model, device, num_samples, num_classes=10, batch_size=256):
+def _generate_samples(
+    model, device, num_samples, num_classes=10, batch_size=256, T=None
+):
     """Generate samples with autocast, return uint8 CPU tensor."""
     all_samples = []
     remaining = num_samples
@@ -73,7 +75,7 @@ def _generate_samples(model, device, num_samples, num_classes=10, batch_size=256
         B = min(batch_size, remaining)
         labels = torch.randint(0, num_classes, (B,), device=device)
         with utils.maybe_autocast(device):
-            samples = model.generate(labels)  # [-1, 1]
+            samples = model.generate(labels, T=T)  # [-1, 1]
         imgs = ((samples + 1) / 2).clamp(0, 1)
         all_samples.append((imgs * 255).to(torch.uint8).cpu())
         remaining -= B
@@ -187,6 +189,7 @@ def train(args):
             iter_start = time.time()
             optimizer.zero_grad(set_to_none=True)
 
+            frac = min(global_step / warmup_steps, 1) if warmup_steps > 0 else 1
             with utils.maybe_autocast(device):
                 loss = model(x, y)
 
@@ -195,7 +198,6 @@ def train(args):
                 model.parameters(), args.grad_norm
             ).item()
             if not args.adamw:  # warmup muon momentum & decay weight decay
-                frac = min(global_step / warmup_steps, 1) if warmup_steps > 0 else 1
                 muon_momentum = max(args.muon_momentum - 0.1, 0.0) + frac * 0.1
                 if args.muon_wd_type == "linear":
                     muon_wd = args.muon_wd * (1 - global_step / total_steps)
