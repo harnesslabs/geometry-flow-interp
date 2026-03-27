@@ -41,6 +41,12 @@ parser.add_argument("--muon-lr", type=float, default=0.005)
 parser.add_argument("--muon-wd", type=float, default=0.05)
 parser.add_argument("--muon-beta2", type=float, default=0.9)
 parser.add_argument("--muon-momentum", type=float, default=0.95)
+parser.add_argument(
+    "--muon-wd-type",
+    type=str,
+    default="constant",
+    choices=["linear", "cosine", "constant"],
+)
 
 parser.add_argument("--warmup", type=int, default=1000, help="lr warmup steps")
 parser.add_argument("--adamw", action="store_true", help="only AdamW")
@@ -191,12 +197,16 @@ def train(args):
             if not args.adamw:  # warmup muon momentum & decay weight decay
                 frac = min(global_step / warmup_steps, 1) if warmup_steps > 0 else 1
                 muon_momentum = max(args.muon_momentum - 0.1, 0.0) + frac * 0.1
-                # muon_wd = args.muon_wd * (1 - global_step / total_steps) # linear decay
-                muon_wd = (  # cosine decay
-                    args.muon_wd
-                    * 0.5
-                    * (1 + math.cos(math.pi * global_step / total_steps))
-                )
+                if args.muon_wd_type == "linear":
+                    muon_wd = args.muon_wd * (1 - global_step / total_steps)
+                elif args.muon_wd_type == "cosine":
+                    muon_wd = (
+                        args.muon_wd
+                        * 0.5
+                        * (1 + math.cos(math.pi * global_step / total_steps))
+                    )
+                else:  # constant
+                    muon_wd = args.muon_wd
                 for g in optimizer.param_groups:
                     if g["kind"] == "muon":
                         g["momentum"] = muon_momentum

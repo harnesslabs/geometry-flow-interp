@@ -49,8 +49,7 @@ class Denoiser(nn.Module):
         return torch.rand(n, device=device)
 
     def _to_velocity(self, x, z, t):
-        eps = self.config.t_eps if self.training else 1e-5
-        return (x - z) / (1 - t).clamp_min(eps)
+        return (x - z) / (1 - t).clamp_min(self.config.t_eps)
 
     def forward(self, x, cond):
         cond_dropped = self.drop_cond(cond) if self.training else cond
