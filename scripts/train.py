@@ -44,14 +44,14 @@ parser.add_argument("--muon-momentum", type=float, default=0.95)
 parser.add_argument(
     "--muon-wd-type",
     type=str,
-    default="constant",
+    default="cosine",
     choices=["linear", "cosine", "constant"],
 )
 
 parser.add_argument("--warmup", type=int, default=1000, help="lr warmup steps")
 parser.add_argument("--adamw", action="store_true", help="only AdamW")
 parser.add_argument("--cosine", action="store_true", help="lr anneal")
-parser.add_argument("--grad-norm", type=float, default=3.0)
+parser.add_argument("--grad-norm", type=float, default=float("inf"))
 
 # experiment
 parser.add_argument(
