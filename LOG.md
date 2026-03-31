@@ -4,6 +4,30 @@ A running summary documenting some experiments and findings. Started Mar 26, 202
 
 ---
 
+## 2026-03-31: Timestep sampling, inference, and training tweaks
+
+### Denoiser (`geoflow/denoiser.py`)
+
+- Timestep sampling reverted from `Uniform[0,1]` back to logit-normal: `sigmoid(randn * P_std + P_mean)` with `P_mean=1.2`, `P_std=1.2` (positive P_mean biases toward higher timesteps)
+- Re-added `P_mean` / `P_std` config fields to `DenoiserConfig`
+- `generate()` now accepts optional `T` argument to override `num_sampling_steps` (e.g., 1-step inference)
+- Renamed `drop_cond` -> `_drop_cond`, `sample_t` -> `_sample_t` (private methods)
+- EMA decay: reduced from two checkpoints `(0.9980, 0.9995)` to single `(0.9980,)`
+
+### Training (`scripts/train.py`)
+
+- Gradient clipping: `--grad-norm` default `1.0` -> `inf` (effectively disabled)
+- Muon weight decay schedule: default `--muon-wd-type` changed from `constant` to `cosine`
+- `_generate_samples` helper now accepts `T` kwarg for configurable inference steps
+- Warmup `frac` computation moved before the `if not args.adamw` block so it's available for all optimizer paths
+
+### Misc
+
+- `torch>=2.10.0` -> `torch>=2.11.0` in `pyproject.toml`
+- `type: ignore` comments updated to `ty: ignore` across `datasets.py`, `optim.py`
+
+---
+
 ## 2026-03-24: Model and Denoiser changes for CIFAR10
 
 ### Model (`geoflow/model.py`)
