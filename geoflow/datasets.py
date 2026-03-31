@@ -30,7 +30,7 @@ class MNIST(Dataset):
     def __len__(self) -> int:
         return self.x.shape[0]
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:  # type: ignore[override]
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:  # ty: ignore[invalid-method-override]
         x = self.x[idx]
         if self.rotate:
             angle = random.uniform(0, 360)
@@ -74,7 +74,7 @@ class CIFAR10(Dataset):
     def __len__(self) -> int:
         return self.x.shape[0]
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:  # type: ignore[override]
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:  # ty: ignore[invalid-method-override]
         return self.x[idx], self.c[idx]
 
 

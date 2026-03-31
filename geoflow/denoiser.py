@@ -16,12 +16,12 @@ class DenoiserConfig:
     num_classes: int
     #
     cond_drop_prob: float = 0.1
-    P_mean: float = -1.2
+    P_mean: float = 1.2
     P_std: float = 1.2
     t_eps: float = 5e-2
     noise_scale: float = 1.0
     #
-    ema_decay: tuple[float, ...] = (0.9980, 0.9995)
+    ema_decay: tuple[float, ...] = (0.9980,)
     #
     sampling_method: Literal["euler", "heun"] = "heun"
     num_sampling_steps: int = 10

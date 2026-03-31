@@ -49,7 +49,7 @@ def adamw_step_fused(
     # Compute update and apply
     denom = (exp_avg_sq / bias2).sqrt() + eps_t
     step_size = lr_t / bias1
-    p.add_(exp_avg / denom, alpha=-step_size)  # type: ignore[arg-type]
+    p.add_(exp_avg / denom, alpha=-step_size)  # ty: ignore
 
 
 # -----------------------------------------------------------------------------
@@ -307,7 +307,7 @@ class MuonAdamW(torch.optim.Optimizer):
         torch._foreach_copy_(params, list(stacked_params.unbind(0)))
 
     @torch.no_grad()
-    def step(self, closure: None = None) -> None:  # type: ignore[override]
+    def step(self, closure: None = None) -> None:  # ty: ignore[invalid-method-override]
         for group in self.param_groups:
             if group["kind"] == "adamw":
                 self._step_adamw(group)
