@@ -91,12 +91,18 @@ def setup_dataloaders(batch_size, dataset="mnist"):
         batch_size=batch_size,
         shuffle=True,
         drop_last=True,
+        pin_memory=True,
+        num_workers=2,
+        persistent_workers=True,
     )
     test_loader = torch.utils.data.DataLoader(
         ds_cls(train=False),
         batch_size=batch_size,
         shuffle=False,
         drop_last=True,
+        pin_memory=True,
+        num_workers=2,
+        persistent_workers=True,
     )
     return train_loader, test_loader
 

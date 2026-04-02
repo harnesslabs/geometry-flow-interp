@@ -181,12 +181,10 @@ def train(args):
     for epoch in range(start_epoch, args.epochs):
         # training
         model.train()
-        data_start = time.time()
+        t0 = time.time()
         for x, y in train_loader:
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-            data_dt = time.time() - data_start
 
-            iter_start = time.time()
             optimizer.zero_grad(set_to_none=True)
 
             frac = min(global_step / warmup_steps, 1) if warmup_steps > 0 else 1
@@ -194,9 +192,8 @@ def train(args):
                 loss = model(x, y)
 
             loss.backward()
-            gnorm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(), args.grad_norm
-            ).item()
+            gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_norm)
+
             if not args.adamw:  # warmup muon momentum & decay weight decay
                 muon_momentum = max(args.muon_momentum - 0.1, 0.0) + frac * 0.1
                 if args.muon_wd_type == "linear":
@@ -213,24 +210,25 @@ def train(args):
                     if g["kind"] == "muon":
                         g["momentum"] = muon_momentum
                         g["weight_decay"] = muon_wd
+
             lr = optimizer.param_groups[0]["lr"]
             optimizer.step()
             scheduler.step()
-
             model.update_ema()
-
-            torch.accelerator.synchronize()
-            dt = time.time() - iter_start
 
             global_step += 1
             global_kimg = global_step * (args.bs / 1000)
 
+            loss_val = loss.item()  # sync
+            gnorm_val = gnorm.item()
+            t1 = time.time()
+            dt = t1 - t0
+            t0 = t1
             metrics = {
-                "train/loss": loss.item(),
-                "train/gnorm": gnorm,
+                "train/loss": loss_val,
+                "train/gnorm": gnorm_val,
                 "train/lr": lr,
                 "train/dt": dt,
-                "train/data_dt": data_dt,
                 "kimg": global_kimg,
                 "epoch": epoch,
             }
@@ -240,10 +238,9 @@ def train(args):
 
             print(
                 f"epoch={epoch} step={global_step} kimg={global_kimg:.1f} "
-                f"train/loss={metrics['train/loss']:.4f} train/gnorm={gnorm:.3f} {lr=:.2e} "
-                f"train/dt={dt:.3f}s train/data={data_dt:.3f}s"
+                f"train/loss={loss_val:.4f} train/gnorm={gnorm_val:.3f} {lr=:.2e} "
+                f"train/dt={dt:.3f}s"
             )
-            data_start = time.time()
 
         # validation
         if epoch % args.checkpoint_interval != 0 and epoch != args.epochs - 1:
